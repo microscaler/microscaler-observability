@@ -4,6 +4,57 @@ Strict operational rules for AI assistants working in this repository. **Knowled
 
 ---
 
+## Golden rules — foundational, enforced at CI
+
+These three rules are the non-negotiable foundations of this crate. They are enforced mechanically so human review and agent diligence can focus on design. Codebases that add testing, linting, or panic-hygiene as afterthoughts never recover; we are starting with them in place at v0.0.1 so they never become someone's later problem.
+
+### G1 — Testing is not an afterthought
+
+- **Every new public item lands with its unit test in the same PR.** No "I'll add tests later". Later never arrives.
+- **Every bug fix lands with a regression test that would have caught the bug.** The test exists to prove the fix works and to prevent the bug from returning.
+- **CI runs `cargo test --all-targets` and `cargo test --all-features --doc` on every PR.** See `.github/workflows/ci.yml`.
+- The v0.0.1 scaffold already has **19 unit tests** across `src/{lib,config,error,shutdown}.rs` despite the crate having no real implementation — because the day we land code *without* a test is the day the rule starts eroding.
+
+### G2 — Pedantic clippy at deny level
+
+`Cargo.toml` `[lints.clippy]` enforces:
+
+| Group / lint | Level | Why |
+|---|---|---|
+| `clippy::pedantic`  | **deny** (with documented carve-outs) | Strict code-quality baseline. No legacy debt to grandfather. |
+| `clippy::nursery`   | **deny** (with documented carve-outs) | Catches emerging anti-patterns. Cheaper to deny now than to triage later. |
+| `unsafe_code`       | **forbid** (rust-level, not clippy) | Pure library; no unsafe is ever needed. Forbid cannot be overridden by `#[allow]`. |
+
+Carve-outs exist for three specific pedantic lints that are noisy on legitimate patterns (`module_name_repetitions`, `missing_errors_doc`, `must_use_candidate`), each documented in the `Cargo.toml` comments next to the lint.
+
+**CI runs** `cargo clippy --all-targets --all-features -- -D warnings` on three feature matrix legs (`default`, `--no-default-features`, `--all-features`). A lint warning anywhere breaks the build.
+
+### G3 — No `unwrap()` / `expect()` / `panic!()` on any non-test path
+
+`Cargo.toml` `[lints.clippy]` declares `deny` for:
+
+- `unwrap_used`
+- `expect_used`
+- `panic`
+- `unreachable`
+- `todo`
+- `unimplemented`
+
+The crate-wide `deny` means the compiler rejects any of these in library code. The only legitimate exceptions are:
+
+1. **Tests** — the pattern `#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]` at the top of a `#[cfg(test)] mod tests` block. `assert!(result.unwrap())` is idiomatic in tests and `deny`-ing it there is the wrong trade-off.
+2. **Deliberate scaffold stubs** — `#[allow(clippy::unimplemented)]` on the `init()` / `from_env()` scaffold functions in v0.0.1. The local `#[allow]` + comment forces any agent removing the `unimplemented!()` to see the allow and the PRD reference right next to it.
+
+Any new `unwrap()` / `expect()` / `panic!` in production code requires an explicit `#[allow(…)]` with a comment justifying the panic. In practice that should almost never happen — propagate a `Result<T, ObservabilityError>` instead. When an operator's process is being killed by a panic in observability init, the fact that the panic was "obvious" at the author's desk is no comfort.
+
+### What these three rules buy us
+
+Libraries that ship with all three from day 1 stay robust as they grow. Libraries that add them later drown in fixing their own accumulated violations. The dependency on this crate from Hauliage's ~17 microservices means that a panic or hidden `Err` here stops ~17 services; we owe Hauliage the rigour that makes that unlikely.
+
+Authority for each rule: `Cargo.toml` `[lints]` table + `.github/workflows/ci.yml`.
+
+---
+
 ## Before you do anything
 
 1. Read [`docs/llmwiki/README.md`](./docs/llmwiki/README.md) — wiki entry point.
@@ -44,6 +95,8 @@ No `justfile` yet. Will be added when Phase O.1 lands.
 ---
 
 ## Core rules the agent must obey
+
+*(These layer on top of the §Golden rules above — those are the invariants, these are the context-specific design rules.)*
 
 ### 1. This crate owns OpenTelemetry globals — nobody else does
 

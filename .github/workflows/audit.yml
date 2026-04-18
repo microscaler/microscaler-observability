@@ -1,0 +1,47 @@
+# Security audit — run `cargo audit` weekly against the RustSec advisory
+# database and also on every Cargo.toml / Cargo.lock change. Advisory matches
+# fail the job; operators triage via an issue.
+#
+# Separate workflow so (a) it can run on a schedule without triggering the
+# rest of CI, and (b) a transient network failure against RustSec doesn't
+# block the main merge path.
+
+name: Security audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/audit.yml'
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  schedule:
+    # Every Monday at 07:00 UTC.
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write   # for auto-filing advisory issues (uses actions-rs/audit-check)
+
+jobs:
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Run cargo audit
+        # The crate is a library without a committed Cargo.lock (library
+        # convention). We generate one temporarily so the advisory check has
+        # something to walk. Library consumers test their own lockfile on
+        # their side.
+        run: |
+          cargo generate-lockfile
+          cargo audit --deny warnings

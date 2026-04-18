@@ -1,18 +1,18 @@
 //! # microscaler-observability
 //!
 //! Hexagonal observability adapter for the microscaler platform. This crate is
-//! the **single place** in the workspace that calls
-//! [`opentelemetry::global::set_tracer_provider`],
-//! [`opentelemetry::global::set_logger_provider`] (via the `tracing` bridge),
-//! [`opentelemetry::global::set_meter_provider`], and
-//! [`opentelemetry::global::set_text_map_propagator`].
+//! the **single place** in the workspace that calls the process-global
+//! installers `opentelemetry::global::set_tracer_provider`,
+//! `opentelemetry::global::set_logger_provider` (via the `tracing` bridge),
+//! `opentelemetry::global::set_meter_provider`, and
+//! `opentelemetry::global::set_text_map_propagator`.
 //!
 //! ## Hexagonal role
 //!
 //! In ports-and-adapters terms:
 //!
-//! - [`brrtrouter`]  — HTTP **input + output** adapter.
-//! - [`lifeguard`]   — Postgres **output** adapter.
+//! - `brrtrouter` — HTTP **input + output** adapter.
+//! - `lifeguard`  — Postgres **output** adapter.
 //! - **this crate** — OTEL **output** adapter (logs / traces / metrics egress).
 //!
 //! All three adapters are **peers** of each other. None of them owns the
@@ -36,10 +36,10 @@
 //! }
 //! ```
 //!
-//! ## What BRRTRouter and Lifeguard do
+//! ## What `BRRTRouter` and `Lifeguard` do
 //!
-//! BRRTRouter emits `tracing::span!` and `tracing::event!` from the HTTP
-//! pipeline. Lifeguard emits the same from the ORM / pool / transaction
+//! `BRRTRouter` emits `tracing::span!` and `tracing::event!` from the HTTP
+//! pipeline. `Lifeguard` emits the same from the ORM / pool / transaction
 //! layers. Neither crate touches any `opentelemetry::global::*` function. The
 //! subscriber installed by [`init`] — specifically the
 //! [`tracing_opentelemetry::OpenTelemetryLayer`] — converts their
@@ -54,11 +54,11 @@
 //!   failures.
 //! - **Traces** — flow via [`tracing_opentelemetry`] → `TracerProvider` →
 //!   OTLP/gRPC → Collector → Jaeger (or Tempo).
-//! - **Metrics** — stay on the Prometheus-text `/metrics` endpoint BRRTRouter
+//! - **Metrics** — stay on the Prometheus-text `/metrics` endpoint `BRRTRouter`
 //!   serves. This crate does **not** install a `MeterProvider` today; see
-//!   `docs/PRD.md` Phase O.6 for the rationale. Lifeguard's
+//!   `docs/PRD.md` Phase O.6 for the rationale. `Lifeguard`'s
 //!   `lifeguard::metrics::prometheus_scrape_text()` is concatenated into
-//!   BRRTRouter's scrape response by the host.
+//!   `BRRTRouter`'s scrape response by the host.
 //!
 //! ## When [`init`] does nothing
 //!
@@ -70,10 +70,10 @@
 //!
 //! ## Shutdown
 //!
-//! The [`ShutdownGuard`] returned by [`init`] flushes the BatchSpanProcessor
-//! and BatchLogRecordProcessor and then shuts the providers down on `Drop`.
+//! The [`ShutdownGuard`] returned by [`init`] flushes the `BatchSpanProcessor`
+//! and `BatchLogRecordProcessor` and then shuts the providers down on `Drop`.
 //! Keep it alive for the process lifetime; drop it last before
-//! `std::process::exit` so SIGTERM doesn't truncate telemetry.
+//! `std::process::exit` so `SIGTERM` doesn't truncate telemetry.
 //!
 //! ## Coordinated version pins
 //!
@@ -83,15 +83,16 @@
 //! Any version bump in this crate requires a coordinated bump in `lifeguard`.
 //! See `docs/PRD.md` §Phase O.0.
 
+// Crate-wide lints live in `Cargo.toml` `[lints.*]` sections (AGENTS.md
+// "Golden rules"). Only top-level module attributes that the [lints] table
+// cannot express go here.
 #![deny(missing_docs)]
-#![warn(clippy::pedantic, clippy::nursery)]
-#![allow(clippy::module_name_repetitions)]
 
 mod config;
 mod error;
 mod shutdown;
 
-pub use config::ObservabilityConfig;
+pub use config::{ObservabilityConfig, OtlpProtocol, Sampler};
 pub use error::{ObservabilityError, ObservabilityResult};
 pub use shutdown::ShutdownGuard;
 
@@ -128,6 +129,10 @@ pub use shutdown::ShutdownGuard;
 ///
 /// In the v0.0.1 scaffold, always panics. The shape is stable; the body lands
 /// with Phase O.1.
+// Crate-wide lint `clippy::unimplemented` is `deny` — we carve out here so
+// this single deliberate scaffold stub compiles. Phase O.1 removes the
+// `unimplemented!` and the allow.
+#[allow(clippy::unimplemented)]
 pub fn init(_config: ObservabilityConfig) -> ObservabilityResult<ShutdownGuard> {
     unimplemented!(
         "microscaler-observability v0.0.1 is a scaffold. \
@@ -135,4 +140,69 @@ pub fn init(_config: ObservabilityConfig) -> ObservabilityResult<ShutdownGuard> 
          Do not call init() yet — use BRRTRouter's legacy \
          brrtrouter::otel::init_logging_with_config() until Phase O.1 ships."
     );
+}
+
+#[cfg(test)]
+mod tests {
+    //! Public-API smoke tests — what v0.0.1 can prove about the scaffold
+    //! without the real `init()` body.
+    //!
+    //! Tests deliberately allow `unwrap_used` / `expect_used` / `panic`:
+    //! `assert!(result.unwrap())` is idiomatic in tests and the `deny` rule
+    //! that exists for library code is the wrong trade-off in a test module.
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::missing_panics_doc
+    )]
+
+    use super::*;
+
+    /// The v0.0.1 scaffold must panic — and the panic message must point
+    /// an operator at the PRD. Regression guard: if someone accidentally
+    /// merges a half-implemented `init()` that silently succeeds into a
+    /// no-op, this test fails.
+    #[test]
+    fn init_panics_with_prd_pointer_in_scaffold() {
+        let config = ObservabilityConfig::default();
+        let result = std::panic::catch_unwind(|| init(config));
+        let panic_payload = result.err().expect("init() must panic in v0.0.1");
+
+        let msg = panic_payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic_payload.downcast_ref::<&str>().copied())
+            .unwrap_or("<non-string panic payload>");
+
+        assert!(
+            msg.contains("docs/PRD.md"),
+            "scaffold panic must point callers at the PRD; got: {msg}"
+        );
+        assert!(
+            msg.contains("Phase O.1"),
+            "scaffold panic must reference the phase that will land the real implementation; got: {msg}"
+        );
+    }
+
+    // Compile-time assertions that the public API surface hasn't drifted.
+    // These are `const _` items so they're fully evaluated at type-check
+    // time — no runtime binding, no `no_effect_underscore_binding`.
+    const _INIT_SIGNATURE_IS_STABLE: fn(ObservabilityConfig) -> ObservabilityResult<ShutdownGuard> =
+        init;
+
+    /// Ensure the canonical error and enum variants still exist under
+    /// their documented names.
+    #[test]
+    fn public_enum_variants_still_exist() {
+        assert!(matches!(
+            ObservabilityError::AlreadyInitialized,
+            ObservabilityError::AlreadyInitialized
+        ));
+        assert!(matches!(OtlpProtocol::Grpc, OtlpProtocol::Grpc));
+        assert!(matches!(
+            Sampler::ParentBasedAlwaysOn,
+            Sampler::ParentBasedAlwaysOn
+        ));
+    }
 }

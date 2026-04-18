@@ -61,3 +61,86 @@ dev-stdout-fallback = []
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
 tonic = "0.12"
 prost = "0.13"
+
+# ---------------------------------------------------------------------------
+# Lints — enforced at CI via `cargo clippy --all-targets --all-features -D warnings`.
+#
+# Discipline goals (AGENTS.md "Golden rules"):
+#   1. Testing is not an afterthought — it starts here at v0.0.1 and grows with
+#      every public item added.
+#   2. No `unwrap()` / `expect()` / explicit `panic!` on any hot path. Deny from
+#      day 1 so the baseline can never regress. Tests opt out locally where
+#      asserting-unexpected is idiomatic.
+#   3. Clippy `pedantic` + `nursery` groups at deny level, with narrow
+#      documented exceptions. No other crate in the microscaler workspace
+#      currently enforces nursery — this crate is the strict-baseline template.
+# ---------------------------------------------------------------------------
+
+[lints.rust]
+# Pure Rust library — no unsafe needed. Forbid is stronger than deny:
+# `#[allow(unsafe_code)]` cannot override forbid, so this is a true invariant.
+unsafe_code = "forbid"
+
+# Every new public item carries rustdoc. Already asserted via `#![deny]` in
+# lib.rs; duplicated here so `cargo clippy` exits non-zero for missing docs
+# even if the crate attribute is removed.
+missing_docs = "deny"
+
+[lints.clippy]
+# =============================================================================
+# HOT-PATH DISCIPLINE — the reason this file exists
+# =============================================================================
+# `unwrap()` and `expect()` panic on `None` / `Err`. In a library function
+# called from a host's `main()` during observability init, a panic takes the
+# whole process with it. Propagate errors via `Result<T, ObservabilityError>`.
+unwrap_used = "deny"
+expect_used = "deny"
+# Explicit `panic!()` discouraged. Prefer `return Err(...)` or typed errors.
+panic = "deny"
+# `unreachable!()` panics at runtime — use exhaustive matching or typed errors.
+unreachable = "deny"
+# Same family: `todo!()` and `unimplemented!()`. Allowed locally on the v0.0.1
+# `init()` scaffold stub; denied crate-wide so the next agent can't ship
+# placeholder code without the Cargo.toml diff making the exemption obvious.
+todo = "deny"
+unimplemented = "deny"
+
+# Indexing that can panic on OOB — prefer `.get()` returning Option.
+indexing_slicing = "warn"
+# Integer arithmetic that can overflow in debug. Warn, not deny — std iterators
+# often produce patterns clippy flags that are provably non-overflowing.
+arithmetic_side_effects = "warn"
+
+# =============================================================================
+# CLIPPY GROUPS — pedantic + nursery at deny, with narrow carve-outs
+# =============================================================================
+# `priority = -1` lets the individual lint exceptions (listed below) take
+# precedence over the group-level setting. This is the documented Cargo way
+# to say "deny the whole group except these specific lints".
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+
+# Carve-outs from pedantic:
+# `x::x` modules are idiomatic Rust re-exports (we use `config::ObservabilityConfig`).
+module_name_repetitions = "allow"
+module_inception = "allow"
+# Requiring an `# Errors` doc section on every `Result`-returning fn is helpful
+# but not strictly necessary for internal helpers. Warn so tooling flags them
+# without blocking CI.
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+# `must_use` suggestions can be spurious on builder-style APIs. Warn.
+must_use_candidate = "warn"
+
+# =============================================================================
+# ERROR HANDLING HYGIENE
+# =============================================================================
+let_underscore_must_use = "deny"      # hiding errors by `let _ =` is a bug
+let_underscore_future = "deny"
+
+# =============================================================================
+# ALLOCATION / PERFORMANCE — informational while the crate is a scaffold
+# =============================================================================
+clone_on_ref_ptr = "warn"
+redundant_clone = "warn"
+large_stack_arrays = "warn"

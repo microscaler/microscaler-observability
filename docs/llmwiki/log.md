@@ -40,3 +40,26 @@ Paired with [`../../AGENTS.md`](../../AGENTS.md) at repo root.
 > **Open:** No `reference/` pages yet. Those seed with Phase O.1 when env-var contract + metric names + span names become concrete.
 
 > **Open:** Cross-repo wiki citations (`[[../../../lifeguard/docs/llmwiki/…](…)]`) depend on the standard `microscaler/` sibling checkout layout. If the directory layout ever changes, every wiki needs a lint pass to fix the relative paths.
+
+## [2026-04-18] scaffold | CI + golden rules landed at v0.0.1
+
+Per user directive "codebases that add testing as an afterthought are always problematic — this must be a golden rule", three foundational disciplines were installed in-tree *before* any phase work begins:
+
+- **G1 — Testing from day 1.** 19 unit tests across `src/{lib,config,error,shutdown}.rs` covering builder methods, error display, RAII shutdown semantics, public API stability, and the deliberate-panic scaffold regression guard.
+- **G2 — Pedantic clippy.** `[lints.clippy]` table in `Cargo.toml` at `deny` level for `pedantic` + `nursery` groups, with three documented carve-outs (`module_name_repetitions`, `missing_errors_doc`, `must_use_candidate`). `[lints.rust]` at `forbid` for `unsafe_code`.
+- **G3 — No hot-path panics.** `unwrap_used`, `expect_used`, `panic`, `unreachable`, `todo`, `unimplemented` all at `deny`. Local `#[allow(clippy::unimplemented)]` on the two scaffold stubs (`init()` + `ObservabilityConfig::from_env()`) so the Phase O.1 engineer removing the `unimplemented!` calls sees the allow next to them.
+
+Pages touched:
+
+- `../../AGENTS.md` — new "Golden rules" section at the top with §G1-G3. "Core rules" section prefix note acknowledging the layer structure.
+- `../../Cargo.toml` — `[lints.rust]` + `[lints.clippy]` tables.
+- `../../src/lib.rs`, `src/config.rs`, `src/error.rs`, `src/shutdown.rs` — local `#[allow]` carve-outs + unit tests.
+- `../../.github/workflows/ci.yml` — new CI workflow: fmt → clippy matrix (3 feature legs) → test matrix (2 feature legs) → docs → MSRV → aggregate `ci-success` gate.
+- `../../.github/workflows/audit.yml` — weekly `cargo audit` against RustSec.
+- `../../.github/dependabot.yml` — weekly Cargo + GitHub-Actions updates, `opentelemetry` family grouped so coordinated-bump PRs stay single.
+
+All gates green locally: `cargo fmt --check` + `cargo clippy --all-targets --all-features -- -D warnings` + `cargo clippy --all-targets --no-default-features -- -D warnings` + `cargo test --all-features` (19 passed) + `cargo doc --no-deps` with `-D warnings -D rustdoc::broken_intra_doc_links`.
+
+> **Open:** Once Phase O.1 lands and `init()` is no longer a scaffold stub, remove the two `#[allow(clippy::unimplemented)]` carve-outs in `lib.rs` and `config.rs`. Grep helper: `rg 'clippy::unimplemented' src/` should return zero matches after Phase O.1 merges.
+
+> **Open:** Set up GitHub branch protection on `main` to require the `CI` job (the aggregate gate) + require PRs (no direct pushes) when the user's ready. Not scripted — GitHub UI task.

@@ -85,18 +85,18 @@ pub struct ObservabilityConfig {
     /// Sampler.
     pub sampler: Sampler,
 
-    /// BatchSpanProcessor schedule delay. Read from
+    /// `BatchSpanProcessor` schedule delay. Read from
     /// `OTEL_BSP_SCHEDULE_DELAY` (milliseconds, default 5000).
     pub bsp_schedule_delay: Duration,
 
-    /// BatchSpanProcessor max export batch size. Read from
+    /// `BatchSpanProcessor` max export batch size. Read from
     /// `OTEL_BSP_MAX_EXPORT_BATCH_SIZE` (default 512).
     pub bsp_max_batch_size: usize,
 
-    /// BatchLogRecordProcessor schedule delay.
+    /// `BatchLogRecordProcessor` schedule delay.
     pub blrp_schedule_delay: Duration,
 
-    /// BatchLogRecordProcessor max export batch size.
+    /// `BatchLogRecordProcessor` max export batch size.
     pub blrp_max_batch_size: usize,
 
     /// `tracing` log-level filter string (merged into `EnvFilter`).
@@ -113,6 +113,16 @@ impl ObservabilityConfig {
     /// Construct from environment variables per the OpenTelemetry spec.
     ///
     /// **Unimplemented** in v0.0.1 — see `docs/PRD.md` Phase O.1.
+    ///
+    /// # Panics
+    ///
+    /// Always panics in the v0.0.1 scaffold. Callers should build a
+    /// [`Self`] via [`Self::default`] + the builder methods until Phase O.1
+    /// lands the real env-parsing body.
+    // Crate-wide `clippy::unimplemented` is `deny`. Allowed locally on the
+    // deliberate scaffold stub. Phase O.1 removes the `unimplemented!` and
+    // the allow.
+    #[allow(clippy::unimplemented)]
     #[must_use]
     pub fn from_env() -> Self {
         unimplemented!("Phase O.1 of docs/PRD.md implements ObservabilityConfig::from_env.")
@@ -144,5 +154,85 @@ impl ObservabilityConfig {
     pub const fn with_sampler(mut self, sampler: Sampler) -> Self {
         self.sampler = sampler;
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::missing_panics_doc
+    )]
+
+    use super::*;
+
+    #[test]
+    fn otlp_protocol_default_is_grpc() {
+        assert_eq!(OtlpProtocol::default(), OtlpProtocol::Grpc);
+    }
+
+    #[test]
+    fn sampler_default_is_parent_based_always_on() {
+        assert_eq!(Sampler::default(), Sampler::ParentBasedAlwaysOn);
+    }
+
+    #[test]
+    fn config_default_has_no_endpoint_and_grpc_protocol() {
+        let config = ObservabilityConfig::default();
+        assert!(
+            config.endpoint.is_none(),
+            "default config must not auto-enable OTLP (preserves behaviour for services with no env vars)"
+        );
+        assert_eq!(config.protocol, OtlpProtocol::Grpc);
+        assert_eq!(config.sampler, Sampler::ParentBasedAlwaysOn);
+        assert!(!config.dev_logs_to_stdout_override);
+    }
+
+    #[test]
+    fn builder_sets_service_name() {
+        let config = ObservabilityConfig::default().with_service_name("hauliage-bff");
+        assert_eq!(config.service_name, "hauliage-bff");
+    }
+
+    #[test]
+    fn builder_sets_service_version() {
+        let config = ObservabilityConfig::default().with_service_version("1.2.3");
+        assert_eq!(config.service_version.as_deref(), Some("1.2.3"));
+    }
+
+    #[test]
+    fn builder_sets_deployment_environment() {
+        let config = ObservabilityConfig::default().with_deployment_environment("prod");
+        assert_eq!(config.deployment_environment.as_deref(), Some("prod"));
+    }
+
+    #[test]
+    fn builder_sets_sampler() {
+        let config =
+            ObservabilityConfig::default().with_sampler(Sampler::ParentBasedTraceIdRatio(0.5));
+        assert_eq!(config.sampler, Sampler::ParentBasedTraceIdRatio(0.5));
+    }
+
+    #[test]
+    fn builders_chain() {
+        let config = ObservabilityConfig::default()
+            .with_service_name("hauliage-fleet")
+            .with_service_version("0.1.0")
+            .with_deployment_environment("dev")
+            .with_sampler(Sampler::AlwaysOff);
+        assert_eq!(config.service_name, "hauliage-fleet");
+        assert_eq!(config.service_version.as_deref(), Some("0.1.0"));
+        assert_eq!(config.deployment_environment.as_deref(), Some("dev"));
+        assert_eq!(config.sampler, Sampler::AlwaysOff);
+    }
+
+    #[test]
+    fn from_env_panics_in_scaffold() {
+        // v0.0.1 scaffold regression guard: from_env() panics with a
+        // pointer at the PRD. Phase O.1 replaces this with real parsing.
+        let result = std::panic::catch_unwind(ObservabilityConfig::from_env);
+        assert!(result.is_err(), "from_env must panic in v0.0.1 scaffold");
     }
 }

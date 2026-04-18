@@ -1,0 +1,176 @@
+# microscaler-observability CI
+#
+# Gates every PR and push to `main` against the "Golden rules" in AGENTS.md:
+#   1. Testing is not an afterthought — every job that can run a test does.
+#   2. Pedantic clippy at `-D warnings`, including the `pedantic` and `nursery`
+#      groups configured in Cargo.toml `[lints.clippy]`.
+#   3. Zero `unwrap()` / `expect()` / `panic!` on any non-test hot path —
+#      `deny`-level clippy rules enforce this at compile time.
+#
+# Fast-fail order: fmt (seconds) → clippy (tens of seconds) → tests → docs.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Format check — fastest possible signal (sub-second).
+  # ---------------------------------------------------------------------------
+  fmt:
+    name: cargo fmt --check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  # ---------------------------------------------------------------------------
+  # Clippy with a feature matrix. The [lints] table in Cargo.toml applies to
+  # all three invocations; the matrix proves the lint rules hold regardless
+  # of which features are enabled.
+  # ---------------------------------------------------------------------------
+  clippy:
+    name: cargo clippy (${{ matrix.features }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - features: default
+            flags: ''
+          - features: no-default-features
+            flags: '--no-default-features'
+          - features: all-features
+            flags: '--all-features'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-clippy-${{ runner.os }}-${{ matrix.features }}-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            cargo-clippy-${{ runner.os }}-${{ matrix.features }}-
+      - run: cargo clippy --all-targets ${{ matrix.flags }} -- -D warnings
+
+  # ---------------------------------------------------------------------------
+  # Tests. Run against both the default feature set and --all-features so
+  # feature-gated code paths (profiling, http-proto, http-json) get exercised.
+  # ---------------------------------------------------------------------------
+  test:
+    name: cargo test (${{ matrix.features }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - features: default
+            flags: ''
+          - features: all-features
+            flags: '--all-features'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-test-${{ runner.os }}-${{ matrix.features }}-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            cargo-test-${{ runner.os }}-${{ matrix.features }}-
+      - run: cargo test ${{ matrix.flags }} --all-targets
+      - name: Doctests
+        run: cargo test ${{ matrix.flags }} --doc
+
+  # ---------------------------------------------------------------------------
+  # Rustdoc with broken intra-doc link denial. The public API surface must
+  # document without warnings.
+  # ---------------------------------------------------------------------------
+  docs:
+    name: cargo doc (deny warnings)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-doc-${{ runner.os }}-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            cargo-doc-${{ runner.os }}-
+      - name: Build rustdoc
+        env:
+          RUSTDOCFLAGS: '-D warnings -D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links'
+        run: cargo doc --no-deps --all-features
+
+  # ---------------------------------------------------------------------------
+  # MSRV (Minimum Supported Rust Version) gate — the crate declares 1.85.
+  # Any PR that introduces a feature requiring a newer toolchain breaks here.
+  # ---------------------------------------------------------------------------
+  msrv:
+    name: MSRV (Rust 1.85)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-msrv-${{ runner.os }}-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            cargo-msrv-${{ runner.os }}-
+      - run: cargo build --all-features
+
+  # ---------------------------------------------------------------------------
+  # Aggregate gate used by branch-protection — every job above must succeed.
+  # Failure of any matrix leg fails this job. Rename in branch protection if
+  # you ever need to split.
+  # ---------------------------------------------------------------------------
+  ci-success:
+    name: CI
+    runs-on: ubuntu-latest
+    needs: [fmt, clippy, test, docs, msrv]
+    if: always()
+    steps:
+      - name: Validate prerequisite jobs
+        run: |
+          echo "fmt:    ${{ needs.fmt.result }}"
+          echo "clippy: ${{ needs.clippy.result }}"
+          echo "test:   ${{ needs.test.result }}"
+          echo "docs:   ${{ needs.docs.result }}"
+          echo "msrv:   ${{ needs.msrv.result }}"
+          if [[ "${{ needs.fmt.result }}"    != "success" ]] \
+          || [[ "${{ needs.clippy.result }}" != "success" ]] \
+          || [[ "${{ needs.test.result }}"   != "success" ]] \
+          || [[ "${{ needs.docs.result }}"   != "success" ]] \
+          || [[ "${{ needs.msrv.result }}"   != "success" ]]; then
+            exit 1
+          fi

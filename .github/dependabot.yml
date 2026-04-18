@@ -1,0 +1,53 @@
+# Dependabot — weekly dependency update PRs.
+#
+# Cargo updates are especially important here because the 0.29.x OpenTelemetry
+# pins must stay aligned with Lifeguard's (see docs/PRD.md §Phase O.0). A
+# Dependabot bump to 0.30.x will open a PR that CI correctly blocks via the
+# MSRV and clippy gates until the coordinated cross-repo bump lands.
+
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "chore(deps)"
+      include: scope
+    # OpenTelemetry family bumps need coordinated cross-repo landing. Keep
+    # them in their own group so a single Dependabot PR covers all five
+    # crates, not five separate ones.
+    groups:
+      opentelemetry:
+        patterns:
+          - 'opentelemetry'
+          - 'opentelemetry_sdk'
+          - 'opentelemetry-otlp'
+          - 'opentelemetry-semantic-conventions'
+          - 'opentelemetry-appender-tracing'
+          - 'tracing-opentelemetry'
+      tracing:
+        patterns:
+          - 'tracing'
+          - 'tracing-subscriber'
+      pyroscope:
+        patterns:
+          - 'pyroscope'
+          - 'pyroscope_pprofrs'
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: "chore(ci)"
+      include: scope

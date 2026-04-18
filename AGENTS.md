@@ -29,7 +29,7 @@ Carve-outs exist for three specific pedantic lints that are noisy on legitimate 
 
 **CI runs** `cargo clippy --all-targets --all-features -- -D warnings` on three feature matrix legs (`default`, `--no-default-features`, `--all-features`). A lint warning anywhere breaks the build.
 
-### G3 — No `unwrap()` / `expect()` / `panic!()` on any non-test path
+### G3 — No `unwrap()` / `expect()` / `panic!()` on any non-test path (includes no `todo!` / `unimplemented!` / `unreachable!`)
 
 `Cargo.toml` `[lints.clippy]` declares `deny` for:
 
@@ -45,13 +45,29 @@ The crate-wide `deny` means the compiler rejects any of these in library code. T
 1. **Tests** — the pattern `#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]` at the top of a `#[cfg(test)] mod tests` block. `assert!(result.unwrap())` is idiomatic in tests and `deny`-ing it there is the wrong trade-off.
 2. **Deliberate scaffold stubs** — `#[allow(clippy::unimplemented)]` on the `init()` / `from_env()` scaffold functions in v0.0.1. The local `#[allow]` + comment forces any agent removing the `unimplemented!()` to see the allow and the PRD reference right next to it.
 
-Any new `unwrap()` / `expect()` / `panic!` in production code requires an explicit `#[allow(…)]` with a comment justifying the panic. In practice that should almost never happen — propagate a `Result<T, ObservabilityError>` instead. When an operator's process is being killed by a panic in observability init, the fact that the panic was "obvious" at the author's desk is no comfort.
+Any new `unwrap()` / `expect()` / `panic!` in production code requires an explicit `#[expect(…, reason = "…")]` (prefer `expect` over `allow` per Microsoft M-LINT-OVERRIDE-EXPECT — `expect` auto-warns when the underlying lint stops firing, catching stale attributes). In practice that should almost never happen — propagate a `Result<T, ObservabilityError>` instead. When an operator's process is being killed by a panic in observability init, the fact that the panic was "obvious" at the author's desk is no comfort.
 
-### What these three rules buy us
+### G4 — JSF-inspired hot-path + complexity discipline
 
-Libraries that ship with all three from day 1 stay robust as they grow. Libraries that add them later drown in fixing their own accumulated violations. The dependency on this crate from Hauliage's ~17 microservices means that a panic or hidden `Err` here stops ~17 services; we owe Hauliage the rigour that makes that unlikely.
+Distilled from the Joint Strike Fighter AV C++ Coding Standards (see `docs/references/jsf-writeup.md`, imported from BRRTRouter's distillation) and Microsoft's Pragmatic Rust Guidelines (see `docs/references/rust-guidelines.md`). The full synthesis lives in [`docs/llmwiki/topics/coding-standards-jsf-inspired.md`](./docs/llmwiki/topics/coding-standards-jsf-inspired.md) and [`docs/llmwiki/topics/pragmatic-rust-guidelines.md`](./docs/llmwiki/topics/pragmatic-rust-guidelines.md). Quick version:
 
-Authority for each rule: `Cargo.toml` `[lints]` table + `.github/workflows/ci.yml`.
+| JSF / Microsoft rule | How we enforce |
+|---|---|
+| Bounded function complexity (JSF AV Rule 1, 3) | `clippy.toml` → `cognitive-complexity-threshold = 30`, `too-many-lines-threshold = 200`, `too-many-arguments-threshold = 8`. With `nursery` denied in `Cargo.toml`, exceeding these is a compile error. |
+| Stack discipline (JSF AV Rule 206 adaptation) | `clippy.toml` → `stack-size-threshold = 512000`. Warns on functions declaring >500 KB of stack — arena candidate. |
+| Strong types, no primitive obsession (Microsoft M-DESIGN-FOR-AI, JSF AV Rule 148) | `OtlpProtocol` / `Sampler` / `ObservabilityError` are all enums. No integer-encoded state in the public API. |
+| `unsafe_code = "forbid"` (Microsoft M-UNSAFE) | `[lints.rust]` in `Cargo.toml` — `forbid` is stronger than `deny`; cannot be overridden by `#[allow]`. |
+| Structured logging with message templates (Microsoft M-LOG-STRUCTURED) | `tracing::info!(field = value, "message")` — never `tracing::info!("…{}…", value)`. Enforced by review in Phase O.3 when span-catalog work starts. |
+| `#[expect(lint, reason = "…")]` over `#[allow(lint)]` (Microsoft M-LINT-OVERRIDE-EXPECT) | Every lint carve-out in this repo is an `#[expect]` so when the underlying lint stops firing the attribute warns, catching stale attributes. See `src/lib.rs::init` + `src/config.rs::from_env` for examples. |
+| Testing before implementation (JSF AV Rule 219-221 + our own G1) | Reflected in G1 above and verified at each commit. |
+
+When a rule seems to conflict with this crate's role (e.g. JSF's "no heap on the hot path" interacts awkwardly with OTEL's `BatchSpanProcessor`), consult [`docs/llmwiki/topics/coding-standards-jsf-inspired.md`](./docs/llmwiki/topics/coding-standards-jsf-inspired.md) for the documented adaptation. If the answer isn't there, open an entry in that page as `> **Open:**` — future agents will thank you.
+
+### What these four rules buy us
+
+Libraries that ship with all four from day 1 stay robust as they grow. Libraries that add them later drown in fixing their own accumulated violations. The dependency on this crate from Hauliage's ~17 microservices means that a panic or hidden `Err` here stops ~17 services; we owe Hauliage the rigour that makes that unlikely.
+
+Authority for each rule: `Cargo.toml` `[lints]` table + `clippy.toml` + `.github/workflows/ci.yml`.
 
 ---
 

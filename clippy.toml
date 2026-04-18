@@ -1,0 +1,45 @@
+# microscaler-observability — Clippy thresholds
+#
+# Paired with [lints.rust] + [lints.clippy] in Cargo.toml. This file sets
+# the *numeric* knobs that clippy exposes (cognitive complexity, stack
+# size, argument counts, function length). The Cargo.toml table sets the
+# *level* (deny / warn / allow) per lint name; this file sets the
+# threshold at which those lints fire.
+#
+# Numbers inherited verbatim from BRRTRouter's JSF-inspired clippy.toml
+# (see docs/references/jsf-writeup.md + docs/references/jsf-compliance.md
+# for the derivation). Since this crate owns only OTEL init + shutdown —
+# no long hot-path functions like a radix walk or dispatch loop — these
+# thresholds are almost-always over-budget for what this crate will do.
+# Aligning with BRRTRouter keeps the whole microscaler workspace on one
+# standard, which matters once Phase O.1 starts pulling types through
+# the layer boundary.
+
+# JSF AV Rule 206 adaptation: bounded stack allocations. Warn on functions
+# that declare >500 KB of stack; those are candidates for arena / heap.
+stack-size-threshold = 512000
+
+# Pattern matching on enums whose variants differ greatly in size is a
+# subtle performance cost (the whole enum pays the largest variant's
+# size). Warn at >256 bytes between largest and smallest.
+enum-variant-size-threshold = 256
+
+# `type_complexity` lint threshold. BRRTRouter keeps this loose because
+# router / dispatcher types are naturally complex (Arc<RwLock<…>>, etc.).
+# We match the same threshold.
+type-complexity-threshold = 300
+
+# JSF AV Rule 3 adaptation: cyclomatic complexity ≤ 20. Clippy's
+# `cognitive_complexity` lint is slightly different from pure CC — it
+# weights nesting and branching more heavily, so the threshold is higher
+# than JSF's 20.
+cognitive-complexity-threshold = 30
+
+# JSF AV Rule 1 adaptation: function length ≤ 200 lines. Clippy's
+# `too_many_lines` lint fires at this threshold. Hot-path functions
+# should stay much shorter; this is a ceiling for crate-wide code.
+too-many-lines-threshold = 200
+
+# `too_many_arguments` lint threshold. Libraries sometimes need
+# config-builder functions with >6 args; 8 is a generous ceiling.
+too-many-arguments-threshold = 8

@@ -119,10 +119,15 @@ impl ObservabilityConfig {
     /// Always panics in the v0.0.1 scaffold. Callers should build a
     /// [`Self`] via [`Self::default`] + the builder methods until Phase O.1
     /// lands the real env-parsing body.
-    // Crate-wide `clippy::unimplemented` is `deny`. Allowed locally on the
-    // deliberate scaffold stub. Phase O.1 removes the `unimplemented!` and
-    // the allow.
-    #[allow(clippy::unimplemented)]
+    //
+    // `#[expect(...)]` (vs `#[allow]`) per Microsoft M-LINT-OVERRIDE-EXPECT
+    // (`docs/references/rust-guidelines.md`): expect fires a warning when the
+    // underlying warning goes away, so the Phase O.1 engineer replacing the
+    // `unimplemented!()` below will be reminded to also drop this attribute.
+    #[expect(
+        clippy::unimplemented,
+        reason = "v0.0.1 scaffold stub; Phase O.1 implements real env parsing"
+    )]
     #[must_use]
     pub fn from_env() -> Self {
         unimplemented!("Phase O.1 of docs/PRD.md implements ObservabilityConfig::from_env.")

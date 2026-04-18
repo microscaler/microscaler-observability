@@ -63,6 +63,17 @@ Inventory of every source this wiki synthesises. The wiki is the *compiled* laye
 | [OpenTelemetry SDK Environment Variables spec](https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/) | Authoritative env-var contract. This crate honours it. | *(future: `reference/env-vars.md`.)* |
 | [W3C TraceContext specification](https://www.w3.org/TR/trace-context/) | Propagation format. | *(future: `topics/w3c-propagation.md` in Phase O.2.)* |
 
+## Imported reference documents (in `../references/`)
+
+Raw source documents — immutable, per the Karpathy three-layer model. The wiki pages synthesise from these; don't edit the references, edit the synthesis.
+
+| Path | Provenance | Role | Synthesised by |
+|---|---|---|---|
+| [`../references/rust-guidelines.md`](../references/rust-guidelines.md) | Microsoft Corporation, MIT licensed. Full text of the [Pragmatic Rust Guidelines](https://microsoft.github.io/pragmatic-rust-guidelines/). | Opinionated idiomatic-Rust rule set with `M-*` identifiers (`M-PANIC-IS-STOP`, `M-HOTPATH`, `M-DESIGN-FOR-AI`, etc.). | [`topics/pragmatic-rust-guidelines.md`](./topics/pragmatic-rust-guidelines.md) |
+| [`../references/jsf-writeup.md`](../references/jsf-writeup.md) | Imported 2026-04-18 from `../../../BRRTRouter/docs/JSF/JSF_WRITEUP.md`. | Full 1300-line adaptation of the [JSF Air Vehicle C++ Coding Standards](https://www.stroustrup.com/JSF-AV-rules.pdf) to Rust / BRRTRouter. The source-of-truth for the JSF-inspired patterns this crate inherits. | [`topics/coding-standards-jsf-inspired.md`](./topics/coding-standards-jsf-inspired.md) |
+| [`../references/jsf-audit-opinion.md`](../references/jsf-audit-opinion.md) | Imported 2026-04-18 from `../../../BRRTRouter/docs/JSF/JSF_AUDIT_OPINION.md`. | Shorter audit-style review of the above, useful for spot-checking which rules actually translate to Rust vs. are handled by the language. | [`topics/coding-standards-jsf-inspired.md`](./topics/coding-standards-jsf-inspired.md) |
+| [`../references/jsf-compliance.md`](../references/jsf-compliance.md) | Imported 2026-04-18 from `../../../BRRTRouter/docs/JSF_COMPLIANCE.md`. | Compliance summary with concrete Cargo.toml / clippy.toml snippets. Reference for our own `clippy.toml` thresholds. | [`topics/coding-standards-jsf-inspired.md`](./topics/coding-standards-jsf-inspired.md) |
+
 ---
 
 > **Open:** When Phase O.1 lands, every `(future: …)` item above gets promoted to a real wiki page in the same commit, and the `log.md` entry notes the promotions.

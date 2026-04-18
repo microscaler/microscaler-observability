@@ -129,10 +129,17 @@ pub use shutdown::ShutdownGuard;
 ///
 /// In the v0.0.1 scaffold, always panics. The shape is stable; the body lands
 /// with Phase O.1.
-// Crate-wide lint `clippy::unimplemented` is `deny` — we carve out here so
-// this single deliberate scaffold stub compiles. Phase O.1 removes the
-// `unimplemented!` and the allow.
-#[allow(clippy::unimplemented)]
+//
+// `#[expect(clippy::unimplemented)]` (vs `#[allow]`) per Microsoft's
+// M-LINT-OVERRIDE-EXPECT rule in `docs/references/rust-guidelines.md`:
+// `expect` fires a lint warning if the underlying warning goes away, so when
+// Phase O.1 removes the `unimplemented!()` macro below, the compiler will
+// warn about this stale attribute and the Phase O.1 engineer will be reminded
+// to delete it along with the macro.
+#[expect(
+    clippy::unimplemented,
+    reason = "v0.0.1 scaffold stub; real body lands with docs/PRD.md Phase O.1"
+)]
 pub fn init(_config: ObservabilityConfig) -> ObservabilityResult<ShutdownGuard> {
     unimplemented!(
         "microscaler-observability v0.0.1 is a scaffold. \

@@ -25,6 +25,8 @@ Concept / subsystem explanations. Answer "why" and "how".
 | [`topics/hexagonal-architecture.md`](./topics/hexagonal-architecture.md) | DRAFT | 2026-04-18 | Why this crate is a peer of BRRTRouter / Lifeguard, not a child. |
 | [`topics/otel-version-pinning.md`](./topics/otel-version-pinning.md) | DRAFT | 2026-04-18 | Why `opentelemetry = "0.29"` is coupled to Lifeguard and how any bump is coordinated. |
 | [`topics/sibling-repos-and-wikis.md`](./topics/sibling-repos-and-wikis.md) | DRAFT | 2026-04-18 | Cross-repo responsibility split and how to navigate between the four wikis. |
+| [`topics/coding-standards-jsf-inspired.md`](./topics/coding-standards-jsf-inspired.md) | DRAFT | 2026-04-18 | JSF AV Rules applied to this crate: bounded complexity, allocation discipline, no-panic hot path, strong types, no recursion, test coverage. |
+| [`topics/pragmatic-rust-guidelines.md`](./topics/pragmatic-rust-guidelines.md) | DRAFT | 2026-04-18 | Microsoft Pragmatic Rust Guidelines — rules we honour, rules adopted for Phase O.1 verification, rules we explicitly decline. |
 
 *(future — will be added as phases land):*
 

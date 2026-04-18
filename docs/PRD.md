@@ -15,7 +15,7 @@
 
 **Primary driver:** Hauliage — the rubber-meets-road consumer — has surfaced two architectural smells that can't be fixed inside either BRRTRouter or Lifeguard alone:
 
-1. **BRRTRouter and Lifeguard both try to own OpenTelemetry globals.** BRRTRouter's `init_logging_with_config` is the single subscriber init (benign but presumptive). Lifeguard's `LifeguardMetrics::init()` calls `opentelemetry::global::set_meter_provider` via `OnceCell`. Any service that embeds both — and every Hauliage service does — is subject to a silent first-caller-wins race.
+1. **BRRTRouter and Lifeguard both historically competed for OTel globals.** BRRTRouter's `init_logging_with_config` is the single subscriber init (benign but presumptive). Lifeguard's `LifeguardMetrics::init()` now keeps a **local** `SdkMeterProvider` for Prometheus scrape text and does **not** call `global::set_meter_provider` (see Lifeguard `docs/OBSERVABILITY_APP_INTEGRATION.md`). Remaining risk is tracer/logger globals — consolidated in **`microscaler-observability::init`**.
 2. **Pure-CLI services using only Lifeguard** (migrations, reflectors, workers) must either depend on BRRTRouter to get a working OTEL init or reimplement it. This is the library-framework-coupling smell that hexagonal architecture is supposed to prevent.
 
 Moving OTEL init into a neutral, peer-of-everything crate fixes both. This PRD is the migration plan.
@@ -65,7 +65,7 @@ Summary of what BRRTRouter's pre-v0.4 PRD found:
 
 ### 4.3 Lifeguard — see `OBSERVABILITY_APP_INTEGRATION.md`
 
-- Already documents the "one `TracerProvider`, one subscriber, Lifeguard declines OTel globals, `channel_layer()` optional" contract — but then violates rule 3 itself by calling `global::set_meter_provider` via `OnceCell`.
+- Documents the "one `TracerProvider`, one subscriber, Lifeguard declines OTel globals, `channel_layer()` optional" contract. **`LifeguardMetrics::init`** (metrics feature) keeps a **local** `SdkMeterProvider` for Prometheus scrape text only — it does **not** call `global::set_meter_provider` (see Lifeguard `docs/OBSERVABILITY_APP_INTEGRATION.md` rule 3).
 - 7 hot-path `tracing::span!` sites on query / pool / transaction operations. Well-named (`lifeguard.execute_query`, `lifeguard.acquire_connection`, etc.).
 - Exposes `lifeguard::metrics::prometheus_scrape_text()` — the concat entry point BRRTRouter's `/metrics` handler uses.
 - `channel_layer()` exists, drains `may`-mpsc to stderr. No Hauliage service actually installs it today.
@@ -155,6 +155,8 @@ Each phase is one or more PRs per repo, coordinated via this PRD's PR merge orde
 **Acceptance:**
 
 - All four repos have synchronised docs. A new engineer can start from any of the four and follow pointers to the master.
+
+**Status:** Cross-repo pointers for Phase O.0 are in place: master PRD (this file), BRRTRouter historical PRD supersession banner, Lifeguard [`OBSERVABILITY_APP_INTEGRATION.md`](../../lifeguard/docs/OBSERVABILITY_APP_INTEGRATION.md), Hauliage [`observability-migration.md`](../../hauliage/docs/observability-migration.md).
 
 **Commit scope:** doc-only. Same-day across all four repos.
 

@@ -1,8 +1,11 @@
 //! RAII shutdown handle returned by [`crate::init`].
 
+use opentelemetry_sdk::logs::SdkLoggerProvider;
+use opentelemetry_sdk::trace::SdkTracerProvider;
+
 /// Opaque RAII handle. Hold this in `main()` for the lifetime of the
 /// process; its [`Drop`] impl is where the batch processors get flushed and
-/// the global providers shut down.
+/// the providers shut down.
 ///
 /// ```ignore
 /// fn main() -> anyhow::Result<()> {
@@ -19,40 +22,42 @@
 /// `main()`-level use.
 #[must_use = "dropping the ShutdownGuard immediately triggers telemetry flush; hold it for the process lifetime"]
 pub struct ShutdownGuard {
-    // Private fields land with Phase O.1. The opaque shape is stable;
-    // the internals (TracerProvider, LoggerProvider handles, non_blocking
-    // appender guard) may evolve.
-    _private: (),
+    tracer_provider: Option<SdkTracerProvider>,
+    logger_provider: Option<SdkLoggerProvider>,
 }
 
 impl ShutdownGuard {
-    /// Construct a no-op guard. Used internally when
-    /// `OTEL_EXPORTER_OTLP_ENDPOINT` is unset; Phase O.1 makes this the
-    /// production path for unconfigured services.
-    ///
-    /// In v0.0.1 this is only called from tests (see the `tests` module).
-    /// The `#[cfg(test)]` gate avoids a `dead_code` clippy warning until
-    /// Phase O.1 wires it into [`crate::init`]; remove the gate in that
-    /// same change.
-    //
-    // No `#[must_use]` here because the return type `Self = ShutdownGuard`
-    // is already `#[must_use = "…"]` on the struct — clippy's
-    // `double_must_use` lint would fire otherwise.
-    #[cfg(test)]
+    /// Construct a no-op guard (no OTLP — stdout-only or tests).
     pub(crate) const fn noop() -> Self {
-        Self { _private: () }
+        Self {
+            tracer_provider: None,
+            logger_provider: None,
+        }
+    }
+
+    /// Hold clones of the OTLP providers for flush/shutdown on drop.
+    #[allow(clippy::missing_const_for_fn)] // not const: SDK handles are not const-constructible
+    pub(crate) fn new_otlp(
+        tracer_provider: SdkTracerProvider,
+        logger_provider: SdkLoggerProvider,
+    ) -> Self {
+        Self {
+            tracer_provider: Some(tracer_provider),
+            logger_provider: Some(logger_provider),
+        }
     }
 }
 
 impl Drop for ShutdownGuard {
     fn drop(&mut self) {
-        // Phase O.1 fills in:
-        //   - force_flush on BatchSpanProcessor (5s timeout)
-        //   - force_flush on BatchLogRecordProcessor (5s timeout)
-        //   - shutdown on TracerProvider
-        //   - shutdown on LoggerProvider
-        //   - Drop the tracing_appender non_blocking guard last (flushes
-        //     stdout fallback if that was active).
+        if let Some(tp) = self.tracer_provider.take() {
+            let _ignored = tp.force_flush();
+            let _ignored = tp.shutdown();
+        }
+        if let Some(lp) = self.logger_provider.take() {
+            let _ignored = lp.force_flush();
+            let _ignored = lp.shutdown();
+        }
     }
 }
 
@@ -69,19 +74,12 @@ mod tests {
 
     #[test]
     fn noop_constructs_and_drops_cleanly() {
-        // v0.0.1 scaffold: the no-op guard is the only kind that can be
-        // constructed (init() panics). Verify it drops without panicking
-        // or leaking anything observable.
         let guard = ShutdownGuard::noop();
         drop(guard);
-        // If drop panicked, `cargo test` would fail. No-op expected.
     }
 
     #[test]
     fn guard_is_send() {
-        // Guard will live in main() for the process lifetime; must be
-        // movable to another thread if the host spawns workers and moves
-        // ownership around.
         fn assert_send<T: Send>(_: &T) {}
         let guard = ShutdownGuard::noop();
         assert_send(&guard);
@@ -89,10 +87,6 @@ mod tests {
 
     #[test]
     fn guard_is_sync() {
-        // In v0.0.1 the guard is trivially Sync (zero-sized fields). Once
-        // Phase O.1 adds `Arc<TracerProvider>` etc., those providers are
-        // Sync by contract in opentelemetry_sdk 0.29. This test is a
-        // compile-time tripwire for that property.
         fn assert_sync<T: Sync>(_: &T) {}
         let guard = ShutdownGuard::noop();
         assert_sync(&guard);

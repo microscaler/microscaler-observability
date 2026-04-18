@@ -77,17 +77,24 @@
 //!
 //! ## Coordinated version pins
 //!
-//! This crate pins `opentelemetry = "0.29"` to match
-//! `lifeguard`'s pins exactly. Both crates must see the same
-//! `opentelemetry::global::*` state or logs and metrics cross-talk silently.
-//! Any version bump in this crate requires a coordinated bump in `lifeguard`.
+//! This crate pins **`opentelemetry = "0.31"`** (git patch aligned with
+//! **`BRRTRouter`** / **`Lifeguard`**). All crates must see the same
+//! `opentelemetry::global::*` types or telemetry cross-talks silently.
 //! See `docs/PRD.md` §Phase O.0.
+//!
+//! ## Shared Kind cluster (local dev)
+//!
+//! With the stack in [`shared-kind-cluster`](https://github.com/microscaler/shared-kind-cluster)
+//! (`tilt up` in that repo), the OTLP gRPC endpoint is typically
+//! `http://otel-collector.observability.svc.cluster.local:4317` from in-cluster
+//! pods, or port-forward the `otel-collector` service in namespace `observability`.
 
 // Crate-wide lints live in `Cargo.toml` `[lints.*]` sections (AGENTS.md
 // "Golden rules"). Only top-level module attributes that the [lints] table
 // cannot express go here.
 #![deny(missing_docs)]
 
+mod bootstrap;
 mod config;
 mod error;
 mod shutdown;
@@ -113,46 +120,21 @@ pub use shutdown::ShutdownGuard;
 ///
 /// # Errors
 ///
-/// Returns [`ObservabilityError`] if the OTLP exporter cannot be constructed
-/// (invalid endpoint, missing TLS config, etc.) or if another subscriber has
-/// already claimed the global slot.
-///
-/// # Phase 1 implementation status
-///
-/// **Not yet implemented.** This signature is the committed API; the body
-/// will be filled in as part of Phase O.1 (see `docs/PRD.md`). For the current
-/// scaffolding phase, this function panics with a deliberate message so that
-/// any caller can validate the integration shape without accidentally
-/// succeeding against a placeholder.
-///
-/// # Panics
-///
-/// In the v0.0.1 scaffold, always panics. The shape is stable; the body lands
-/// with Phase O.1.
-//
-// `#[expect(clippy::unimplemented)]` (vs `#[allow]`) per Microsoft's
-// M-LINT-OVERRIDE-EXPECT rule in `docs/references/rust-guidelines.md`:
-// `expect` fires a lint warning if the underlying warning goes away, so when
-// Phase O.1 removes the `unimplemented!()` macro below, the compiler will
-// warn about this stale attribute and the Phase O.1 engineer will be reminded
-// to delete it along with the macro.
-#[expect(
-    clippy::unimplemented,
-    reason = "v0.0.1 scaffold stub; real body lands with docs/PRD.md Phase O.1"
-)]
-pub fn init(_config: ObservabilityConfig) -> ObservabilityResult<ShutdownGuard> {
-    unimplemented!(
-        "microscaler-observability v0.0.1 is a scaffold. \
-         Phase O.1 of docs/PRD.md lands the real implementation. \
-         Do not call init() yet — use BRRTRouter's legacy \
-         brrtrouter::otel::init_logging_with_config() until Phase O.1 ships."
-    );
+/// Returns [`ObservabilityError::AlreadyInitialized`] if called twice in one
+/// process, [`ObservabilityError::InvalidEndpoint`] if the OTLP URL is
+/// unusable, [`ObservabilityError::ExporterConstruction`] if the OTLP client
+/// cannot be built, [`ObservabilityError::SubscriberAlreadyInstalled`] if
+/// another global `tracing` subscriber was installed first, or
+/// [`ObservabilityError::Shutdown`] only from [`ShutdownGuard`] drop (not from
+/// `init` itself).
+#[allow(clippy::needless_pass_by_value)] // Call sites pass freshly built `ObservabilityConfig` from `from_env()` + builders
+pub fn init(config: ObservabilityConfig) -> ObservabilityResult<ShutdownGuard> {
+    bootstrap::init_internal(&config)
 }
 
 #[cfg(test)]
 mod tests {
-    //! Public-API smoke tests — what v0.0.1 can prove about the scaffold
-    //! without the real `init()` body.
+    //! Public-API smoke tests.
     //!
     //! Tests deliberately allow `unwrap_used` / `expect_used` / `panic`:
     //! `assert!(result.unwrap())` is idiomatic in tests and the `deny` rule
@@ -166,37 +148,9 @@ mod tests {
 
     use super::*;
 
-    /// The v0.0.1 scaffold must panic — and the panic message must point
-    /// an operator at the PRD. Regression guard: if someone accidentally
-    /// merges a half-implemented `init()` that silently succeeds into a
-    /// no-op, this test fails.
-    #[test]
-    fn init_panics_with_prd_pointer_in_scaffold() {
-        let config = ObservabilityConfig::default();
-        let result = std::panic::catch_unwind(|| init(config));
-        let panic_payload = result.err().expect("init() must panic in v0.0.1");
-
-        let msg = panic_payload
-            .downcast_ref::<String>()
-            .map(String::as_str)
-            .or_else(|| panic_payload.downcast_ref::<&str>().copied())
-            .unwrap_or("<non-string panic payload>");
-
-        assert!(
-            msg.contains("docs/PRD.md"),
-            "scaffold panic must point callers at the PRD; got: {msg}"
-        );
-        assert!(
-            msg.contains("Phase O.1"),
-            "scaffold panic must reference the phase that will land the real implementation; got: {msg}"
-        );
-    }
-
     // Compile-time assertions that the public API surface hasn't drifted.
-    // These are `const _` items so they're fully evaluated at type-check
-    // time — no runtime binding, no `no_effect_underscore_binding`.
-    const _INIT_SIGNATURE_IS_STABLE: fn(ObservabilityConfig) -> ObservabilityResult<ShutdownGuard> =
-        init;
+    const _INIT_SIGNATURE_IS_STABLE:
+        fn(ObservabilityConfig) -> ObservabilityResult<ShutdownGuard> = init;
 
     /// Ensure the canonical error and enum variants still exist under
     /// their documented names.

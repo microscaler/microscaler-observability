@@ -5,6 +5,7 @@
 //! specification"). This crate's own env-var names are prefixed `MICROSCALER_`
 //! only when no suitable OTEL-standard variable exists.
 
+use std::env;
 use std::time::Duration;
 
 /// Protocol for the OTLP exporter connection.
@@ -111,26 +112,91 @@ pub struct ObservabilityConfig {
 
 impl ObservabilityConfig {
     /// Construct from environment variables per the OpenTelemetry spec.
-    ///
-    /// **Unimplemented** in v0.0.1 — see `docs/PRD.md` Phase O.1.
-    ///
-    /// # Panics
-    ///
-    /// Always panics in the v0.0.1 scaffold. Callers should build a
-    /// [`Self`] via [`Self::default`] + the builder methods until Phase O.1
-    /// lands the real env-parsing body.
-    //
-    // `#[expect(...)]` (vs `#[allow]`) per Microsoft M-LINT-OVERRIDE-EXPECT
-    // (`docs/references/rust-guidelines.md`): expect fires a warning when the
-    // underlying warning goes away, so the Phase O.1 engineer replacing the
-    // `unimplemented!()` below will be reminded to also drop this attribute.
-    #[expect(
-        clippy::unimplemented,
-        reason = "v0.0.1 scaffold stub; Phase O.1 implements real env parsing"
-    )]
     #[must_use]
     pub fn from_env() -> Self {
-        unimplemented!("Phase O.1 of docs/PRD.md implements ObservabilityConfig::from_env.")
+        let endpoint = env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
+        let protocol = parse_otlp_protocol(env::var("OTEL_EXPORTER_OTLP_PROTOCOL").ok().as_deref());
+
+        let timeout_ms = env::var("OTEL_EXPORTER_OTLP_TIMEOUT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(10_000_u64);
+        let timeout = Duration::from_millis(timeout_ms);
+
+        let service_name = env::var("OTEL_SERVICE_NAME")
+            .unwrap_or_else(|_| "unknown_service".to_string());
+
+        let service_version = env::var("OTEL_SERVICE_VERSION").ok();
+
+        let deployment_environment = env::var("DEPLOYMENT_ENVIRONMENT").ok();
+
+        let mut extra_resource_attributes = parse_otel_resource_attributes(
+            env::var("OTEL_RESOURCE_ATTRIBUTES").ok().as_deref(),
+        );
+
+        let sampler = parse_otel_traces_sampler(
+            env::var("OTEL_TRACES_SAMPLER").ok().as_deref(),
+            env::var("OTEL_TRACES_SAMPLER_ARG").ok().as_deref(),
+        );
+
+        let bsp_schedule_delay_ms = env::var("OTEL_BSP_SCHEDULE_DELAY")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(5_000_u64);
+        let bsp_schedule_delay = Duration::from_millis(bsp_schedule_delay_ms);
+
+        let bsp_max_batch_size = env::var("OTEL_BSP_MAX_EXPORT_BATCH_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(512_usize);
+
+        let blrp_schedule_delay_ms = env::var("OTEL_BLRP_SCHEDULE_DELAY")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1_000_u64);
+        let blrp_schedule_delay = Duration::from_millis(blrp_schedule_delay_ms);
+
+        let blrp_max_batch_size = env::var("OTEL_BLRP_MAX_EXPORT_BATCH_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(512_usize);
+
+        let rust_log = env::var("RUST_LOG").ok();
+
+        let dev_logs_to_stdout_override = env::var("BRRTR_DEV_LOGS_TO_STDOUT")
+            .map(|s| {
+                matches!(
+                    s.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+            .unwrap_or(false);
+
+        // If resource attrs duplicate deployment.environment, prefer explicit DEPLOYMENT_ENVIRONMENT.
+        if deployment_environment.is_some() {
+            extra_resource_attributes.retain(|(k, _)| k != "deployment.environment");
+        }
+
+        Self {
+            endpoint,
+            protocol,
+            timeout,
+            service_name,
+            service_version,
+            deployment_environment,
+            extra_resource_attributes,
+            sampler,
+            bsp_schedule_delay,
+            bsp_max_batch_size,
+            blrp_schedule_delay,
+            blrp_max_batch_size,
+            rust_log,
+            dev_logs_to_stdout_override,
+        }
     }
 
     /// Override the service name. Overrides `OTEL_SERVICE_NAME`.
@@ -159,6 +225,48 @@ impl ObservabilityConfig {
     pub const fn with_sampler(mut self, sampler: Sampler) -> Self {
         self.sampler = sampler;
         self
+    }
+}
+
+fn parse_otlp_protocol(raw: Option<&str>) -> OtlpProtocol {
+    let Some(s) = raw else {
+        return OtlpProtocol::Grpc;
+    };
+    match s.trim().to_ascii_lowercase().as_str() {
+        "http/protobuf" | "http_proto" | "http-proto" => OtlpProtocol::HttpProto,
+        "http/json" | "http-json" => OtlpProtocol::HttpJson,
+        _ => OtlpProtocol::Grpc,
+    }
+}
+
+fn parse_otel_resource_attributes(raw: Option<&str>) -> Vec<(String, String)> {
+    let Some(raw) = raw else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for part in raw.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if let Some((k, v)) = part.split_once('=') {
+            out.push((k.trim().to_string(), v.trim().to_string()));
+        }
+    }
+    out
+}
+
+fn parse_otel_traces_sampler(name: Option<&str>, arg: Option<&str>) -> Sampler {
+    let Some(name) = name else {
+        return Sampler::ParentBasedAlwaysOn;
+    };
+    match name.trim().to_ascii_lowercase().as_str() {
+        "always_off" => Sampler::AlwaysOff,
+        "traceidratio" | "parentbased_traceidratio" => {
+            let ratio = arg.and_then(|s| s.parse().ok()).unwrap_or(1.0_f64);
+            Sampler::ParentBasedTraceIdRatio(ratio)
+        }
+        _ => Sampler::ParentBasedAlwaysOn,
     }
 }
 
@@ -215,8 +323,8 @@ mod tests {
 
     #[test]
     fn builder_sets_sampler() {
-        let config =
-            ObservabilityConfig::default().with_sampler(Sampler::ParentBasedTraceIdRatio(0.5));
+        let config = ObservabilityConfig::default()
+            .with_sampler(Sampler::ParentBasedTraceIdRatio(0.5));
         assert_eq!(config.sampler, Sampler::ParentBasedTraceIdRatio(0.5));
     }
 
@@ -233,11 +341,4 @@ mod tests {
         assert_eq!(config.sampler, Sampler::AlwaysOff);
     }
 
-    #[test]
-    fn from_env_panics_in_scaffold() {
-        // v0.0.1 scaffold regression guard: from_env() panics with a
-        // pointer at the PRD. Phase O.1 replaces this with real parsing.
-        let result = std::panic::catch_unwind(ObservabilityConfig::from_env);
-        assert!(result.is_err(), "from_env must panic in v0.0.1 scaffold");
-    }
 }

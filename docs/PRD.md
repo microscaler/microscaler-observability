@@ -50,8 +50,8 @@ We are creating a new crate [`microscaler-observability`](../) as an outbound ad
 
 ### 4.1 `microscaler-observability` scaffold
 
-- v0.0.1 scaffold committed in this repo. `init()` deliberately panics with a pointer at this PRD. No implementation yet — that's Phase O.1.
-- Cargo.toml pins `opentelemetry = "0.29"` to match Lifeguard's already-committed pins.
+- v0.1.0: `init()` wires OTLP traces + logs via `microscaler-observability` (see `src/bootstrap.rs`). BRRTRouter's `init_logging_with_config` delegates to this crate when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
+- Cargo.toml pins `opentelemetry = "0.31"` (coordinated with BRRTRouter and Lifeguard; git patch for reqwest 0.13 — see `[patch.crates-io]`).
 
 ### 4.2 BRRTRouter — see historical PRD v0.3 §4.1–4.8
 

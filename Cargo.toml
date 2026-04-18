@@ -1,6 +1,6 @@
 [package]
 name = "microscaler-observability"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Hexagonal observability adapter for microscaler services: owns all OpenTelemetry globals (Tracer / Logger / Meter / Propagator) on behalf of BRRTRouter, Lifeguard, and host apps. Adapters emit tracing events; this crate handles the OTLP egress."
@@ -16,22 +16,24 @@ path = "src/lib.rs"
 # ---------------------------------------------------------------------------
 # OpenTelemetry pins.
 #
-# The 0.29.x line is chosen to MATCH lifeguard's pins (see
-# ../lifeguard/Cargo.toml lines 54-57). All three consumers (BRRTRouter,
-# Lifeguard, Hauliage) must compile against the same opentelemetry-api major
-# or they end up with two parallel OTEL stacks and incompatible globals.
+# The 0.31.x line matches BRRTRouter and is coordinated with lifeguard (see
+# ../lifeguard/Cargo.toml). All consumers must share one opentelemetry-api
+# major or globals diverge.
 #
-# Bumping is a coordinated cross-repo change. See docs/PRD.md §Phase O.0.
+# BRRTRouter patches the OTLP stack from open-telemetry/opentelemetry-rust git
+# for reqwest 0.13; the same [patch.crates-io] block is duplicated here so this
+# crate builds standalone and resolves identically when used as a path dep.
+# See docs/PRD.md §Phase O.0.
 # ---------------------------------------------------------------------------
 [dependencies]
-opentelemetry = "0.29"
-opentelemetry_sdk = { version = "0.29", features = ["rt-tokio-current-thread", "trace", "logs"] }
-opentelemetry-otlp = { version = "0.29", default-features = false, features = ["grpc-tonic", "trace", "logs"] }
-opentelemetry-semantic-conventions = "0.29"
-opentelemetry-appender-tracing = "0.29"
+opentelemetry = { version = "0.31", features = ["trace"] }
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio-current-thread", "trace", "logs"] }
+opentelemetry-otlp = { version = "=0.31.0", default-features = false, features = ["grpc-tonic", "trace", "logs"] }
+opentelemetry-semantic-conventions = "0.31"
+opentelemetry-appender-tracing = { version = "0.31", features = ["experimental_use_tracing_span_context"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "registry", "env-filter", "fmt"] }
-tracing-opentelemetry = "0.30"
+tracing-opentelemetry = "0.32"
 thiserror = "1"
 
 # Optional: Pyroscope continuous profiling (Phase O.12). Off by default.
@@ -59,8 +61,17 @@ dev-stdout-fallback = []
 [dev-dependencies]
 # Integration tests spin up an in-process OTLP gRPC receiver to verify end-to-end.
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
-tonic = "0.12"
-prost = "0.13"
+tonic = "0.14"
+prost = "0.14"
+
+# Align with BRRTRouter / opentelemetry-otlp 0.31 (reqwest 0.13).
+[patch.crates-io]
+opentelemetry = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "965078315b58ae14725721735f1c8e2bc2d3b445" }
+opentelemetry_sdk = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "965078315b58ae14725721735f1c8e2bc2d3b445" }
+opentelemetry-http = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "965078315b58ae14725721735f1c8e2bc2d3b445" }
+opentelemetry-otlp = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "965078315b58ae14725721735f1c8e2bc2d3b445" }
+opentelemetry-proto = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "965078315b58ae14725721735f1c8e2bc2d3b445" }
+opentelemetry-semantic-conventions = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "965078315b58ae14725721735f1c8e2bc2d3b445" }
 
 # ---------------------------------------------------------------------------
 # Lints — enforced at CI via `cargo clippy --all-targets --all-features -D warnings`.

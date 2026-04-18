@@ -2,6 +2,8 @@
 
 **Hexagonal observability adapter for the microscaler platform.**
 
+Cluster OTLP endpoints and env vars: see [`docs/CLUSTER_OBSERVABILITY.md`](docs/CLUSTER_OBSERVABILITY.md).
+
 This crate is the single place in the workspace that owns OpenTelemetry
 global state — `TracerProvider`, `LoggerProvider`, `MeterProvider`, and
 the W3C propagator. It sits alongside [BRRTRouter](../BRRTRouter/)

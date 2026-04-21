@@ -68,6 +68,15 @@
 //! `cargo test` and `cargo run` showing logs locally without contacting any
 //! Collector.
 //!
+//! ## Tokio runtime (OTLP only)
+//!
+//! gRPC OTLP (`tonic`) and the OTEL batch processors use Tokio (`tokio::spawn`).
+//! BRRTRouter-based services run on the `may` runtime, not Tokio, so there is
+//! no Tokio 1.x reactor in `main` unless we install one. When `OTEL_EXPORTER_OTLP_ENDPOINT`
+//! is set, [`init`] builds a **dedicated multi-thread Tokio runtime**, constructs
+//! exporters and providers inside `runtime.enter()`, and stores that runtime in
+//! [`ShutdownGuard`] until process exit so background export keeps working.
+//!
 //! ## Shutdown
 //!
 //! The [`ShutdownGuard`] returned by [`init`] flushes the `BatchSpanProcessor`

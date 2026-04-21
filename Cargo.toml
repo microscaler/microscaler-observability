@@ -35,6 +35,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "registry", "env-filter", "fmt"] }
 tracing-opentelemetry = "0.32"
 thiserror = "1"
+# OTLP/Tonic builds gRPC channels with `tokio::spawn`; hosts (e.g. BRRTRouter + may) have no
+# Tokio runtime in `main`. We own one runtime for the process lifetime when OTLP is enabled.
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time"] }
 
 # Optional: Pyroscope continuous profiling (Phase O.12). Off by default.
 pyroscope = { version = "0.5", optional = true }

@@ -91,21 +91,37 @@ fn install_subscriber_otlp(
 
     let resource = build_resource(config);
 
-    let span_exporter = build_span_exporter(config, endpoint)?;
-    let log_exporter = build_log_exporter(config, endpoint)?;
+    // Tonic OTLP and `opentelemetry_sdk` batch processors use `tokio::spawn`. Hauliage / BRRTRouter
+    // `main` runs on the `may` stack, not inside a Tokio runtime — build exporters and providers
+    // under a dedicated multi-thread runtime we keep for the process lifetime (see `ShutdownGuard`).
+    let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_name("obs-otlp")
+        .build()
+        .map_err(|e| {
+            ObservabilityError::ExporterConstruction(format!("tokio runtime (required for OTLP): {e}"))
+        })?;
 
-    let trace_sampler = map_sampler(&config.sampler);
+    let (tracer_provider, logger_provider) = {
+        let _enter = tokio_runtime.enter();
+        let span_exporter = build_span_exporter(config, endpoint)?;
+        let log_exporter = build_log_exporter(config, endpoint)?;
 
-    let tracer_provider = SdkTracerProvider::builder()
-        .with_batch_exporter(span_exporter)
-        .with_sampler(trace_sampler)
-        .with_resource(resource.clone())
-        .build();
+        let trace_sampler = map_sampler(&config.sampler);
 
-    let logger_provider = SdkLoggerProvider::builder()
-        .with_batch_exporter(log_exporter)
-        .with_resource(resource)
-        .build();
+        let tracer_provider = SdkTracerProvider::builder()
+            .with_batch_exporter(span_exporter)
+            .with_sampler(trace_sampler)
+            .with_resource(resource.clone())
+            .build();
+
+        let logger_provider = SdkLoggerProvider::builder()
+            .with_batch_exporter(log_exporter)
+            .with_resource(resource)
+            .build();
+
+        (tracer_provider, logger_provider)
+    };
 
     global::set_tracer_provider(tracer_provider.clone());
 
@@ -142,7 +158,11 @@ fn install_subscriber_otlp(
         return Err(ObservabilityError::SubscriberAlreadyInstalled);
     }
 
-    Ok(ShutdownGuard::new_otlp(tracer_provider, logger_provider))
+    Ok(ShutdownGuard::new_otlp(
+        tokio_runtime,
+        tracer_provider,
+        logger_provider,
+    ))
 }
 
 fn validate_endpoint(endpoint: &str) -> ObservabilityResult<()> {

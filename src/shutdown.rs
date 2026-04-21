@@ -22,6 +22,11 @@ use opentelemetry_sdk::trace::SdkTracerProvider;
 /// `main()`-level use.
 #[must_use = "dropping the ShutdownGuard immediately triggers telemetry flush; hold it for the process lifetime"]
 pub struct ShutdownGuard {
+    /// When OTLP is enabled, keeps a Tokio runtime alive for Tonic/hyper and OTEL batch export.
+    /// Declared first so it is **dropped last** (after tracer/logger flush in [`Drop`]).
+    /// Not borrowed after construction; retention is intentional (`-D dead-code` would fire otherwise).
+    #[allow(dead_code)]
+    tokio_runtime: Option<tokio::runtime::Runtime>,
     tracer_provider: Option<SdkTracerProvider>,
     logger_provider: Option<SdkLoggerProvider>,
 }
@@ -30,6 +35,7 @@ impl ShutdownGuard {
     /// Construct a no-op guard (no OTLP — stdout-only or tests).
     pub(crate) const fn noop() -> Self {
         Self {
+            tokio_runtime: None,
             tracer_provider: None,
             logger_provider: None,
         }
@@ -38,10 +44,12 @@ impl ShutdownGuard {
     /// Hold clones of the OTLP providers for flush/shutdown on drop.
     #[allow(clippy::missing_const_for_fn)] // not const: SDK handles are not const-constructible
     pub(crate) fn new_otlp(
+        tokio_runtime: tokio::runtime::Runtime,
         tracer_provider: SdkTracerProvider,
         logger_provider: SdkLoggerProvider,
     ) -> Self {
         Self {
+            tokio_runtime: Some(tokio_runtime),
             tracer_provider: Some(tracer_provider),
             logger_provider: Some(logger_provider),
         }

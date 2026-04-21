@@ -9,9 +9,10 @@ use std::env;
 use std::time::Duration;
 
 /// Protocol for the OTLP exporter connection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OtlpProtocol {
     /// OTLP/gRPC over HTTP/2. Default. Port 4317.
+    #[default]
     Grpc,
     /// OTLP/HTTP with protobuf body. Port 4318.
     HttpProto,
@@ -19,29 +20,18 @@ pub enum OtlpProtocol {
     HttpJson,
 }
 
-impl Default for OtlpProtocol {
-    fn default() -> Self {
-        Self::Grpc
-    }
-}
-
 /// Sampler configuration. Follows the OTEL spec's
 /// `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` conventions.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum Sampler {
     /// Always sample. Good for dev and for low-traffic services.
+    #[default]
     ParentBasedAlwaysOn,
     /// Sample a fraction of root spans; honour parent context otherwise.
     ParentBasedTraceIdRatio(f64),
     /// Never sample. Useful for a canary that should only carry propagated
     /// context without generating its own traces.
     AlwaysOff,
-}
-
-impl Default for Sampler {
-    fn default() -> Self {
-        Self::ParentBasedAlwaysOn
-    }
 }
 
 /// Top-level configuration for [`crate::init`].
@@ -167,14 +157,12 @@ impl ObservabilityConfig {
 
         let rust_log = env::var("RUST_LOG").ok();
 
-        let dev_logs_to_stdout_override = env::var("BRRTR_DEV_LOGS_TO_STDOUT")
-            .map(|s| {
-                matches!(
-                    s.trim().to_ascii_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on"
-                )
-            })
-            .unwrap_or(false);
+        let dev_logs_to_stdout_override = env::var("BRRTR_DEV_LOGS_TO_STDOUT").is_ok_and(|s| {
+            matches!(
+                s.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        });
 
         // If resource attrs duplicate deployment.environment, prefer explicit DEPLOYMENT_ENVIRONMENT.
         if deployment_environment.is_some() {

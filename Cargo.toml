@@ -34,7 +34,7 @@ opentelemetry-appender-tracing = { version = "0.31", features = ["experimental_u
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "registry", "env-filter", "fmt"] }
 tracing-opentelemetry = "0.32"
-thiserror = "1"
+thiserror = "2"
 # OTLP/Tonic builds gRPC channels with `tokio::spawn`; hosts (e.g. BRRTRouter + may) have no
 # Tokio runtime in `main`. We own one runtime for the process lifetime when OTLP is enabled.
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time"] }

@@ -30,7 +30,7 @@ opentelemetry = { version = "0.31", features = ["trace"] }
 opentelemetry_sdk = { version = "0.31", features = ["rt-tokio-current-thread", "trace", "logs"] }
 opentelemetry-otlp = { version = "=0.31.0", default-features = false, features = ["grpc-tonic", "trace", "logs"] }
 opentelemetry-semantic-conventions = "0.31"
-opentelemetry-appender-tracing = { version = "0.31", features = ["experimental_use_tracing_span_context"] }
+opentelemetry-appender-tracing = { version = "0.32", features = ["experimental_use_tracing_span_context"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "registry", "env-filter", "fmt"] }
 tracing-opentelemetry = "0.32"

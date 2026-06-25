@@ -117,16 +117,15 @@ impl ObservabilityConfig {
             .unwrap_or(10_000_u64);
         let timeout = Duration::from_millis(timeout_ms);
 
-        let service_name = env::var("OTEL_SERVICE_NAME")
-            .unwrap_or_else(|_| "unknown_service".to_string());
+        let service_name =
+            env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| "unknown_service".to_string());
 
         let service_version = env::var("OTEL_SERVICE_VERSION").ok();
 
         let deployment_environment = env::var("DEPLOYMENT_ENVIRONMENT").ok();
 
-        let mut extra_resource_attributes = parse_otel_resource_attributes(
-            env::var("OTEL_RESOURCE_ATTRIBUTES").ok().as_deref(),
-        );
+        let mut extra_resource_attributes =
+            parse_otel_resource_attributes(env::var("OTEL_RESOURCE_ATTRIBUTES").ok().as_deref());
 
         let sampler = parse_otel_traces_sampler(
             env::var("OTEL_TRACES_SAMPLER").ok().as_deref(),
@@ -311,8 +310,8 @@ mod tests {
 
     #[test]
     fn builder_sets_sampler() {
-        let config = ObservabilityConfig::default()
-            .with_sampler(Sampler::ParentBasedTraceIdRatio(0.5));
+        let config =
+            ObservabilityConfig::default().with_sampler(Sampler::ParentBasedTraceIdRatio(0.5));
         assert_eq!(config.sampler, Sampler::ParentBasedTraceIdRatio(0.5));
     }
 
@@ -328,5 +327,4 @@ mod tests {
         assert_eq!(config.deployment_environment.as_deref(), Some("dev"));
         assert_eq!(config.sampler, Sampler::AlwaysOff);
     }
-
 }

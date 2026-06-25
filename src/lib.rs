@@ -158,8 +158,8 @@ mod tests {
     use super::*;
 
     // Compile-time assertions that the public API surface hasn't drifted.
-    const _INIT_SIGNATURE_IS_STABLE:
-        fn(ObservabilityConfig) -> ObservabilityResult<ShutdownGuard> = init;
+    const _INIT_SIGNATURE_IS_STABLE: fn(ObservabilityConfig) -> ObservabilityResult<ShutdownGuard> =
+        init;
 
     /// Ensure the canonical error and enum variants still exist under
     /// their documented names.

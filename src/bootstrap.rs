@@ -11,8 +11,8 @@ use opentelemetry_otlp::{LogExporter, SpanExporter, WithExportConfig};
 use opentelemetry_sdk::logs::SdkLoggerProvider;
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::resource::Resource;
-use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_sdk::trace::Sampler as OtelSampler;
+use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_semantic_conventions::attribute::{SERVICE_NAME, SERVICE_VERSION};
 use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::layer::SubscriberExt;
@@ -52,9 +52,8 @@ fn should_install_stdout_fmt(config: &ObservabilityConfig) -> bool {
 fn build_env_filter(config: &ObservabilityConfig) -> EnvFilter {
     EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         let base = config.rust_log.as_deref().unwrap_or("info");
-        FromStr::from_str(base).unwrap_or_else(|_| {
-            FromStr::from_str("error").unwrap_or_else(|_| EnvFilter::default())
-        })
+        FromStr::from_str(base)
+            .unwrap_or_else(|_| FromStr::from_str("error").unwrap_or_else(|_| EnvFilter::default()))
     })
 }
 
@@ -99,7 +98,9 @@ fn install_subscriber_otlp(
         .thread_name("obs-otlp")
         .build()
         .map_err(|e| {
-            ObservabilityError::ExporterConstruction(format!("tokio runtime (required for OTLP): {e}"))
+            ObservabilityError::ExporterConstruction(format!(
+                "tokio runtime (required for OTLP): {e}"
+            ))
         })?;
 
     let (tracer_provider, logger_provider) = {

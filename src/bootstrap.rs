@@ -184,10 +184,10 @@ fn validate_endpoint(endpoint: &str) -> ObservabilityResult<()> {
 }
 
 fn build_resource(config: &ObservabilityConfig) -> Resource {
-    let mut attrs: Vec<KeyValue> = vec![
-        KeyValue::new(SERVICE_NAME, config.service_name.clone()),
-        KeyValue::new("service.namespace", "microscaler"),
-    ];
+    // Do not invent a fake service.namespace (there is no "microscaler" k8s
+    // namespace). Set it only via OTEL_RESOURCE_ATTRIBUTES, or let the
+    // collector k8sattributes processor inject k8s.namespace.name.
+    let mut attrs: Vec<KeyValue> = vec![KeyValue::new(SERVICE_NAME, config.service_name.clone())];
     if let Some(v) = &config.service_version {
         attrs.push(KeyValue::new(SERVICE_VERSION, v.clone()));
     }

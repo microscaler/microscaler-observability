@@ -43,8 +43,21 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "time"] }
 pyroscope = { version = "0.5", optional = true }
 pyroscope_pprofrs = { version = "0.2", optional = true }
 
+# Google Cloud Profiler agent (feature `cloud-profiler`, Linux only; off unless MICROSCALER_CLOUD_PROFILER=1).
+# pprof samples CPU in-process (SIGPROF); ureq talks to the metadata server and the Profiler API.
+[target.'cfg(target_os = "linux")'.dependencies]
+pprof = { version = "0.15", default-features = false, features = ["cpp", "prost-codec"], optional = true }
+ureq = { version = "3", default-features = false, features = ["rustls", "json"], optional = true }
+serde_json = { version = "1", optional = true }
+base64 = { version = "0.22", optional = true }
+flate2 = { version = "1", optional = true }
+
 [features]
 default = []
+
+# Continuous CPU profiles to Google Cloud Profiler (flame graphs in the console). Compiled in, inert until the
+# process has MICROSCALER_CLOUD_PROFILER=1 (pp only; BRRTRouter ADR 005). Linux only: elsewhere it compiles to nothing.
+cloud-profiler = ["dep:pprof", "dep:ureq", "dep:serde_json", "dep:base64", "dep:flate2"]
 
 # Enable push-mode continuous profiling to a Pyroscope server.
 # Triggered by `PYROSCOPE_SERVER_ADDRESS` env var when compiled with this feature.

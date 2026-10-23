@@ -106,6 +106,8 @@
 mod bootstrap;
 mod config;
 mod error;
+#[cfg(all(feature = "cloud-profiler", target_os = "linux"))]
+mod profiler;
 mod shutdown;
 
 pub use config::{ObservabilityConfig, OtlpProtocol, Sampler};

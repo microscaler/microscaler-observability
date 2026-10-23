@@ -35,13 +35,21 @@ pub fn init_internal(config: &ObservabilityConfig) -> ObservabilityResult<Shutdo
 
     let use_stdout_fmt = should_install_stdout_fmt(config);
 
-    match config.endpoint.as_deref() {
+    #[allow(unused_mut)] // mutated only with the cloud-profiler feature
+    let mut guard = match config.endpoint.as_deref() {
         None => install_subscriber_fmt_only(env_filter, use_stdout_fmt),
         Some(endpoint) if endpoint.trim().is_empty() => {
             install_subscriber_fmt_only(env_filter, use_stdout_fmt)
         }
         Some(endpoint) => install_subscriber_otlp(env_filter, config, endpoint, use_stdout_fmt),
+    }?;
+    // Cloud Profiler is independent of OTLP: a service with tracing off is still profiled when asked.
+    #[cfg(all(feature = "cloud-profiler", target_os = "linux"))]
+    {
+        guard.profiler =
+            crate::profiler::start(&config.service_name, config.service_version.as_deref());
     }
+    Ok(guard)
 }
 
 #[allow(clippy::missing_const_for_fn)] // ObservabilityConfig is not a const type

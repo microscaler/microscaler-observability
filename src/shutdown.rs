@@ -29,6 +29,10 @@ pub struct ShutdownGuard {
     tokio_runtime: Option<tokio::runtime::Runtime>,
     tracer_provider: Option<SdkTracerProvider>,
     logger_provider: Option<SdkLoggerProvider>,
+    /// The Cloud Profiler agent, when compiled in and enabled; dropping it stops the agent thread.
+    #[cfg(all(feature = "cloud-profiler", target_os = "linux"))]
+    #[allow(dead_code)]
+    pub(crate) profiler: Option<crate::profiler::ProfilerHandle>,
 }
 
 impl ShutdownGuard {
@@ -38,6 +42,8 @@ impl ShutdownGuard {
             tokio_runtime: None,
             tracer_provider: None,
             logger_provider: None,
+            #[cfg(all(feature = "cloud-profiler", target_os = "linux"))]
+            profiler: None,
         }
     }
 
@@ -52,6 +58,8 @@ impl ShutdownGuard {
             tokio_runtime: Some(tokio_runtime),
             tracer_provider: Some(tracer_provider),
             logger_provider: Some(logger_provider),
+            #[cfg(all(feature = "cloud-profiler", target_os = "linux"))]
+            profiler: None,
         }
     }
 }

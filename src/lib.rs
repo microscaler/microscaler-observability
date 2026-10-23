@@ -114,6 +114,26 @@ pub use config::{ObservabilityConfig, OtlpProtocol, Sampler};
 pub use error::{ObservabilityError, ObservabilityResult};
 pub use shutdown::ShutdownGuard;
 
+/// Keeps the Cloud Profiler agent running; dropping it stops the agent. See [`start_profiler`].
+#[must_use = "dropping the guard stops the profiler"]
+pub struct ProfilerGuard {
+    #[cfg(all(feature = "cloud-profiler", target_os = "linux"))]
+    _handle: Option<profiler::ProfilerHandle>,
+}
+
+/// Start the Google Cloud Profiler agent without the rest of [`init`], for hosts that do not send OTLP
+/// (no `OTEL_EXPORTER_OTLP_ENDPOINT`) but should still be profiled. [`init`] starts it by itself.
+///
+/// Does nothing unless the crate is built with the `cloud-profiler` feature on Linux and the process has
+/// `MICROSCALER_CLOUD_PROFILER=1`. Hold the guard for the life of the process.
+#[allow(unused_variables, clippy::missing_const_for_fn)] // no-ops without the feature
+pub fn start_profiler(service_name: &str, service_version: Option<&str>) -> ProfilerGuard {
+    ProfilerGuard {
+        #[cfg(all(feature = "cloud-profiler", target_os = "linux"))]
+        _handle: profiler::start(service_name, service_version),
+    }
+}
+
 /// Initialize the observability adapter: OTLP tracer, OTLP logger (if
 /// endpoint is set), W3C propagator, and the single global `tracing`
 /// subscriber.

@@ -129,15 +129,15 @@ jobs:
         run: cargo doc --no-deps --all-features
 
   # ---------------------------------------------------------------------------
-  # MSRV (Minimum Supported Rust Version) gate — the crate declares 1.85.
+  # MSRV (Minimum Supported Rust Version) gate — the crate declares 1.89 (uuid 1.29; tonic 0.14, time and icu need 1.88).
   # Any PR that introduces a feature requiring a newer toolchain breaks here.
   # ---------------------------------------------------------------------------
   msrv:
-    name: MSRV (Rust 1.85)
+    name: MSRV (Rust 1.89)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.85
+      - uses: dtolnay/rust-toolchain@1.89
       - uses: actions/cache@v4
         with:
           path: |

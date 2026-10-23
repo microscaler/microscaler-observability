@@ -2,7 +2,7 @@
 name = "microscaler-observability"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.89"
 description = "Hexagonal observability adapter for microscaler services: owns all OpenTelemetry globals (Tracer / Logger / Meter / Propagator) on behalf of BRRTRouter, Lifeguard, and host apps. Adapters emit tracing events; this crate handles the OTLP egress."
 license = "Apache-2.0"
 repository = "https://github.com/microscaler/microscaler-observability"

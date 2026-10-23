@@ -51,13 +51,19 @@ ureq = { version = "3", default-features = false, features = ["rustls", "json"],
 serde_json = { version = "1", optional = true }
 base64 = { version = "0.22", optional = true }
 flate2 = { version = "1", optional = true }
+# Heap profiles from jemalloc's own sampling (needs the service's allocator to be tikv-jemallocator 0.7 with
+# "profiling", and _RJEM_MALLOC_CONF=prof:true,... at run time); symbolized in-process.
+jemalloc_pprof = { version = "0.9", features = ["symbolize"], optional = true }
+# jemalloc_pprof reads "opt.prof", which exists only in a jemalloc built with profiling (and unwraps the read):
+# require it here, so the one jemalloc-sys in a consumer's graph always has it.
+tikv-jemalloc-sys = { version = "0.7", features = ["profiling"], optional = true }
 
 [features]
 default = []
 
 # Continuous CPU profiles to Google Cloud Profiler (flame graphs in the console). Compiled in, inert until the
 # process has MICROSCALER_CLOUD_PROFILER=1 (pp only; BRRTRouter ADR 005). Linux only: elsewhere it compiles to nothing.
-cloud-profiler = ["dep:pprof", "dep:ureq", "dep:serde_json", "dep:base64", "dep:flate2"]
+cloud-profiler = ["dep:pprof", "dep:ureq", "dep:serde_json", "dep:base64", "dep:flate2", "dep:jemalloc_pprof", "dep:tikv-jemalloc-sys"]
 
 # Enable push-mode continuous profiling to a Pyroscope server.
 # Triggered by `PYROSCOPE_SERVER_ADDRESS` env var when compiled with this feature.

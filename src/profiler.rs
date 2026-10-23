@@ -3,9 +3,15 @@
 //! Google ships Profiler agents for Go, Java, Node.js and Python only, but the API is language-neutral
 //! (`cloudprofiler.googleapis.com/v2`): an agent long-polls `CreateProfile`, the server answers when it wants a
 //! profile from this deployment (one instance at a time, about one profile a minute per deployment), the agent
-//! collects it and uploads it with `UpdateProfile` as a gzipped pprof protobuf. This module is that agent for CPU:
-//! `pprof` samples every thread at 99 Hz with `SIGPROF` for the requested duration (10 s), symbolizes in-process,
-//! and a background thread uploads the result with the pod's Workload Identity token from the metadata server.
+//! collects it and uploads it with `UpdateProfile` as a gzipped pprof protobuf. This module is that agent, run from a
+//! background thread with the pod's Workload Identity token from the metadata server:
+//!
+//! - **CPU**: `pprof` samples every thread at 99 Hz with `SIGPROF` for the requested duration (10 s) and
+//!   symbolizes in-process.
+//! - **HEAP** (live bytes by allocating stack), offered only when the process runs jemalloc with profiling on:
+//!   the service's global allocator is `tikv-jemallocator` 0.7 with its `profiling` feature, and the environment
+//!   has `_RJEM_MALLOC_CONF=prof:true,prof_active:true,lg_prof_sample:19` (a sample about every 512 KiB
+//!   allocated). `jemalloc_pprof` dumps jemalloc's sampled heap and symbolizes it in-process.
 //!
 //! **Opt-in twice.** The `cloud-profiler` feature compiles it in (Linux only); the process starts it only with
 //! `MICROSCALER_CLOUD_PROFILER=1` (pp sets it; prod does not — `BRRTRouter` ADR 005). Without the variable nothing
@@ -91,7 +97,11 @@ struct Agent {
 
 /// What `CreateProfile` / an error answered with.
 enum Outcome {
-    Profile { name: String, duration: Duration },
+    Profile {
+        name: String,
+        kind: String,
+        duration: Duration,
+    },
     RetryAfter(Duration),
 }
 
@@ -125,13 +135,20 @@ impl Agent {
                 "target": self.target,
                 "labels": { "version": self.version, "language": "rust" },
             },
-            "profileType": ["CPU"],
+            "profileType": profile_types(),
         });
         let url = format!("{API}/projects/{project}/profiles");
         match self.call("POST", &url, &body, CREATE_TIMEOUT)? {
             Outcome::RetryAfter(d) => Ok(Some(d)),
-            Outcome::Profile { name, duration } => {
-                let bytes = collect_cpu(duration, &self.stop)?;
+            Outcome::Profile {
+                name,
+                kind,
+                duration,
+            } => {
+                let bytes = match kind.as_str() {
+                    "HEAP" => collect_heap()?,
+                    _ => collect_cpu(duration, &self.stop)?,
+                };
                 let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
                 let patch = serde_json::json!({ "profileBytes": encoded });
                 let url = format!("{API}/{name}?updateMask=profileBytes");
@@ -183,7 +200,16 @@ impl Agent {
                     .and_then(serde_json::Value::as_str)
                     .and_then(parse_duration)
                     .unwrap_or(Duration::from_secs(10));
-                Ok(Outcome::Profile { name, duration })
+                let kind = json
+                    .get("profileType")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("CPU")
+                    .to_string();
+                Ok(Outcome::Profile {
+                    name,
+                    kind,
+                    duration,
+                })
             }
             // ABORTED: not this instance's turn; the error carries google.rpc.RetryInfo with the delay.
             409 => Ok(Outcome::RetryAfter(
@@ -276,6 +302,27 @@ fn metadata(path: &str) -> Res<String> {
         .map_err(|e| format!("metadata {path}: {e}"))
 }
 
+/// The profile types this process can produce: CPU always, HEAP when jemalloc profiling is on.
+fn profile_types() -> Vec<&'static str> {
+    if jemalloc_pprof::PROF_CTL.is_some() {
+        vec!["CPU", "HEAP"]
+    } else {
+        vec!["CPU"]
+    }
+}
+
+/// jemalloc's sampled live heap as a gzipped, symbolized pprof protobuf.
+fn collect_heap() -> Res<Vec<u8>> {
+    let ctl = jemalloc_pprof::PROF_CTL
+        .as_ref()
+        .ok_or("heap: jemalloc profiling is off")?;
+    let mut ctl = ctl.blocking_lock();
+    if !ctl.activated() {
+        return Err("heap: jemalloc profiling is not active".into());
+    }
+    ctl.dump_pprof().map_err(|e| format!("heap: {e}"))
+}
+
 /// Sample CPU for `duration` (cut short if the agent is stopped) and return the gzipped pprof protobuf.
 fn collect_cpu(duration: Duration, stop: &AtomicBool) -> Res<Vec<u8>> {
     let guard = pprof::ProfilerGuardBuilder::default()
@@ -359,6 +406,13 @@ mod tests {
         let gz = collect_cpu(Duration::from_millis(500), &stop).unwrap();
         spin.join().unwrap();
         assert_eq!(gz.get(..2), Some(&[0x1f, 0x8b][..]), "gzip magic");
+    }
+
+    #[test]
+    fn offers_heap_only_with_jemalloc_profiling() {
+        // the test binary's allocator is the system one, so jemalloc profiling is off
+        assert_eq!(profile_types(), vec!["CPU"]);
+        assert!(collect_heap().is_err());
     }
 
     #[test]

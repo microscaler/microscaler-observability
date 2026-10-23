@@ -103,6 +103,9 @@ enum Outcome {
         name: String,
         kind: String,
         duration: Duration,
+        /// The whole profile `CreateProfile` answered: `UpdateProfile` must send it back (deployment included,
+        /// else the server rejects the upload with "invalid project ID").
+        profile: serde_json::Value,
     },
     RetryAfter(Duration),
 }
@@ -146,13 +149,14 @@ impl Agent {
                 name,
                 kind,
                 duration,
+                profile,
             } => {
                 let bytes = match kind.as_str() {
                     "HEAP" => collect_heap()?,
                     _ => collect_cpu(duration, &self.stop)?,
                 };
                 let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-                let patch = serde_json::json!({ "profileBytes": encoded });
+                let patch = upload_body(profile, encoded);
                 let url = format!("{API}/{name}?updateMask=profileBytes");
                 self.call("PATCH", &url, &patch, Duration::from_secs(60))?;
                 Ok(None)
@@ -211,6 +215,7 @@ impl Agent {
                     name,
                     kind,
                     duration,
+                    profile: json,
                 })
             }
             // ABORTED: not this instance's turn; the error carries google.rpc.RetryInfo with the delay.
@@ -337,6 +342,17 @@ fn impersonate(token: &str, service_account: &str) -> Res<(String, u64)> {
     Ok((access, 3_000))
 }
 
+/// The `UpdateProfile` body: the profile `CreateProfile` handed out, with the bytes filled in. The server validates
+/// the whole resource (an upload carrying only `profileBytes` fails on the empty `deployment.projectId`).
+fn upload_body(mut profile: serde_json::Value, encoded: String) -> serde_json::Value {
+    if let Some(obj) = profile.as_object_mut() {
+        obj.insert("profileBytes".into(), serde_json::Value::String(encoded));
+    } else {
+        profile = serde_json::json!({ "profileBytes": encoded });
+    }
+    profile
+}
+
 fn metadata(path: &str) -> Res<String> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(10)))
@@ -425,6 +441,18 @@ fn retry_delay(json: &serde_json::Value) -> Option<Duration> {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+
+    #[test]
+    fn uploads_the_whole_profile_back() {
+        let created = serde_json::json!({
+            "name": "projects/p/profiles/1", "profileType": "CPU", "duration": "10s",
+            "deployment": {"projectId": "pw-runtime-pp", "target": "billing"},
+        });
+        let body = upload_body(created, "Ynl0ZXM=".into());
+        assert_eq!(body["deployment"]["projectId"], "pw-runtime-pp");
+        assert_eq!(body["profileType"], "CPU");
+        assert_eq!(body["profileBytes"], "Ynl0ZXM=");
+    }
 
     #[test]
     fn parses_protobuf_durations() {

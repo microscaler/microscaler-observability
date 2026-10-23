@@ -128,8 +128,7 @@ fn install_subscriber_otlp(
 
     global::set_text_map_propagator(TraceContextPropagator::new());
 
-    let tracer = tracer_provider.tracer("microscaler");
-    let otel_trace_layer = OpenTelemetryLayer::new(tracer);
+    let otel_trace_layer = trace_layer(&tracer_provider);
 
     let otel_log_layer = OpenTelemetryTracingBridge::new(&logger_provider);
 
@@ -164,6 +163,28 @@ fn install_subscriber_otlp(
         tracer_provider,
         logger_provider,
     ))
+}
+
+/// The `tracing` → OpenTelemetry span layer, without OpenTelemetry context activation.
+///
+/// Since `tracing-opentelemetry` 0.32, entering a span also attaches its OpenTelemetry `Context`
+/// to a thread-local stack and parks the guard on a thread-local stack of the layer; exiting pops
+/// it again — on the thread that exits. Our hosts run requests on `may` coroutines, which the
+/// scheduler moves between worker threads whenever they yield (database, Redis, HTTP I/O). A span
+/// entered before a yield and exited after it leaves its context, its guard and the span data
+/// they hold on the first thread for good: memory grows with every such request until
+/// OpenTelemetry's stack refuses pushes at 65 535 entries per thread (`PriceWhisperer`
+/// docs/incidents/2026-10-23_otel_context_leak_PLAN.md; identity-login-service reached ~720 MB).
+///
+/// Nothing here needs the thread-local context: `may_tracing` propagates through the coroutine
+/// context (`may_tracing::otel`), and `OpenTelemetrySpanExt::context()` reads the span itself.
+fn trace_layer<S>(
+    provider: &SdkTracerProvider,
+) -> OpenTelemetryLayer<S, opentelemetry_sdk::trace::SdkTracer>
+where
+    S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+{
+    OpenTelemetryLayer::new(provider.tracer("microscaler")).with_context_activation(false)
 }
 
 fn validate_endpoint(endpoint: &str) -> ObservabilityResult<()> {
@@ -263,5 +284,38 @@ mod tests {
     #[test]
     fn validate_endpoint_rejects_bare_host() {
         assert!(validate_endpoint("otel-collector:4317").is_err());
+    }
+
+    /// A span entered on one thread and exited on another (a may coroutine that yields while the
+    /// span is entered and resumes elsewhere) must leave no OpenTelemetry context behind on the
+    /// first thread. With context activation on, `Context::current()` there keeps the span (and
+    /// the stack grows by one entry per request).
+    #[test]
+    fn span_exited_on_another_thread_leaves_no_context_behind() {
+        use opentelemetry::trace::TraceContextExt;
+
+        let provider = SdkTracerProvider::builder().build();
+        let dispatch = tracing::Dispatch::new(Registry::default().with(trace_layer(&provider)));
+
+        for _ in 0..100 {
+            let span = tracing::dispatcher::with_default(
+                &dispatch,
+                || tracing::info_span!(parent: None, "request"),
+            );
+            let id = span.id().expect("span enabled");
+            dispatch.enter(&id);
+            let d = dispatch.clone();
+            std::thread::spawn(move || {
+                d.exit(&span.id().expect("span enabled"));
+                drop(span);
+            })
+            .join()
+            .unwrap();
+        }
+
+        assert!(
+            !opentelemetry::Context::current().has_active_span(),
+            "a span exited on another thread is still this thread's OpenTelemetry context"
+        );
     }
 }

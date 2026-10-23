@@ -30,6 +30,8 @@ use base64::Engine as _;
 use pprof::protos::Message as _;
 
 const ENV_ENABLE: &str = "MICROSCALER_CLOUD_PROFILER";
+/// Optional: the service account the agent acts as (`name@project.iam.gserviceaccount.com`).
+const ENV_SERVICE_ACCOUNT: &str = "MICROSCALER_CLOUD_PROFILER_SERVICE_ACCOUNT";
 const API: &str = "https://cloudprofiler.googleapis.com/v2";
 const METADATA: &str = "http://metadata.google.internal/computeMetadata/v1";
 /// Sampling rate. 99 rather than 100 so sampling does not beat against 10 ms timers.
@@ -251,16 +253,24 @@ impl Agent {
         let raw = metadata("instance/service-accounts/default/token")?;
         let json: serde_json::Value =
             serde_json::from_str(&raw).map_err(|e| format!("token: {e}"))?;
-        let token = json
+        let mut token = json
             .get("access_token")
             .and_then(serde_json::Value::as_str)
             .ok_or("token: no access_token")?
             .to_string();
-        let ttl = json
+        let mut ttl = json
             .get("expires_in")
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(300)
             .saturating_sub(60);
+        // Cloud Profiler refuses the pod's own Workload Identity principal (403 PERMISSION_DENIED with
+        // roles/cloudprofiler.agent granted to it), so the agent can act as a service account instead: the pod's
+        // token buys that account's token from IAM Credentials (the pod needs Service Account Token Creator on it).
+        if let Ok(sa) = std::env::var(ENV_SERVICE_ACCOUNT) {
+            if !sa.trim().is_empty() {
+                (token, ttl) = impersonate(&token, sa.trim())?;
+            }
+        }
         self.token = Some((
             token.clone(),
             Instant::now()
@@ -285,6 +295,46 @@ impl Agent {
             );
         }
     }
+}
+
+/// An access token for `service_account`, bought with `token` from IAM Credentials `generateAccessToken`.
+/// Returns the token and its lifetime in seconds less a minute.
+fn impersonate(token: &str, service_account: &str) -> Res<(String, u64)> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .timeout_global(Some(Duration::from_secs(30)))
+        .build()
+        .into();
+    let url = format!(
+        "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{service_account}:generateAccessToken"
+    );
+    let mut resp = agent
+        .post(&url)
+        .header("Authorization", &format!("Bearer {token}"))
+        .send_json(
+            serde_json::json!({ "scope": ["https://www.googleapis.com/auth/cloud-platform"] }),
+        )
+        .map_err(|e| format!("impersonate {service_account}: {e}"))?;
+    let status = resp.status().as_u16();
+    let json: serde_json::Value = resp
+        .body_mut()
+        .read_json()
+        .unwrap_or(serde_json::Value::Null);
+    if !(200..=299).contains(&status) {
+        return Err(format!(
+            "impersonate {service_account}: {status} {}",
+            json.get("error")
+                .map(ToString::to_string)
+                .unwrap_or_default()
+        ));
+    }
+    let access = json
+        .get("accessToken")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("impersonate: no accessToken")?
+        .to_string();
+    // expireTime is RFC 3339; IAM issues one-hour tokens, so refresh after 50 minutes rather than parse it.
+    Ok((access, 3_000))
 }
 
 fn metadata(path: &str) -> Res<String> {

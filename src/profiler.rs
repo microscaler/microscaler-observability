@@ -449,9 +449,10 @@ mod tests {
             "deployment": {"projectId": "pw-runtime-pp", "target": "billing"},
         });
         let body = upload_body(created, "Ynl0ZXM=".into());
-        assert_eq!(body["deployment"]["projectId"], "pw-runtime-pp");
-        assert_eq!(body["profileType"], "CPU");
-        assert_eq!(body["profileBytes"], "Ynl0ZXM=");
+        let at = |p: &str| body.pointer(p).and_then(serde_json::Value::as_str);
+        assert_eq!(at("/deployment/projectId"), Some("pw-runtime-pp"));
+        assert_eq!(at("/profileType"), Some("CPU"));
+        assert_eq!(at("/profileBytes"), Some("Ynl0ZXM="));
     }
 
     #[test]

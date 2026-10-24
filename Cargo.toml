@@ -46,7 +46,11 @@ pyroscope_pprofrs = { version = "0.2", optional = true }
 # Google Cloud Profiler agent (feature `cloud-profiler`, Linux only; off unless MICROSCALER_CLOUD_PROFILER=1).
 # pprof samples CPU in-process (SIGPROF); ureq talks to the metadata server and the Profiler API.
 [target.'cfg(target_os = "linux")'.dependencies]
-pprof = { version = "0.15", default-features = false, features = ["cpp", "prost-codec"], optional = true }
+# microscaler fork of pprof 0.15.0 (branch microscaler/lazy-collector): upstream keeps its ~96 MiB sample table in a
+# static for the life of the process after the first profile; the fork allocates it only while a profile runs.
+pprof = { git = "https://github.com/microscaler/pprof-rs.git", rev = "ccc6819e45e2440eba00d3be572a1cb81b52ec5b", default-features = false, features = ["cpp", "prost-codec"], optional = true }
+# The symbolizer pprof and jemalloc_pprof both use; its cache is emptied after every profile (see profiler.rs).
+backtrace = { version = "0.3", optional = true }
 ureq = { version = "3", default-features = false, features = ["rustls", "json"], optional = true }
 serde_json = { version = "1", optional = true }
 base64 = { version = "0.22", optional = true }
@@ -63,7 +67,7 @@ default = []
 
 # Continuous CPU profiles to Google Cloud Profiler (flame graphs in the console). Compiled in, inert until the
 # process has MICROSCALER_CLOUD_PROFILER=1 (pp only; BRRTRouter ADR 005). Linux only: elsewhere it compiles to nothing.
-cloud-profiler = ["dep:pprof", "dep:ureq", "dep:serde_json", "dep:base64", "dep:flate2", "dep:jemalloc_pprof", "dep:tikv-jemalloc-sys"]
+cloud-profiler = ["dep:pprof", "dep:backtrace", "dep:ureq", "dep:serde_json", "dep:base64", "dep:flate2", "dep:jemalloc_pprof", "dep:tikv-jemalloc-sys"]
 
 # Enable push-mode continuous profiling to a Pyroscope server.
 # Triggered by `PYROSCOPE_SERVER_ADDRESS` env var when compiled with this feature.

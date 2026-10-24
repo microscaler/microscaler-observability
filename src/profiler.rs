@@ -13,6 +13,14 @@
 //!   has `_RJEM_MALLOC_CONF=prof:true,prof_active:true,lg_prof_sample:19` (a sample about every 512 KiB
 //!   allocated). `jemalloc_pprof` dumps jemalloc's sampled heap and symbolizes it in-process.
 //!
+//! **Memory.** Symbolizing goes through `backtrace`'s resolver, which caches what it loaded for good: every DWARF
+//! section of the binary (inflated into the heap when the sections are compressed, as the `-debug` images ship them)
+//! and `addr2line`'s parsed units, lines and functions. On a `-debug` Sesame service that was ~150 MiB of inflated
+//! sections plus ~100–300 MiB of parsed tables, growing as profiles reached new code (24 Oct 2026). The agent empties
+//! that cache after every profile, so a profile costs its symbolization while it runs and nothing after. CPU samples
+//! go into `pprof`'s collector, which the microscaler fork allocates only while a profile runs (upstream holds
+//! ~96 MiB in a static from the first profile on).
+//!
 //! **Opt-in twice.** The `cloud-profiler` feature compiles it in (Linux only); the process starts it only with
 //! `MICROSCALER_CLOUD_PROFILER=1` (pp sets it; prod does not — `BRRTRouter` ADR 005). Without the variable nothing
 //! here runs: no thread, no signal handler, no network.
@@ -152,9 +160,13 @@ impl Agent {
                 profile,
             } => {
                 let bytes = match kind.as_str() {
-                    "HEAP" => collect_heap()?,
-                    _ => collect_cpu(duration, &self.stop)?,
+                    "HEAP" => collect_heap(),
+                    _ => collect_cpu(duration, &self.stop),
                 };
+                // Symbolization loaded the binary's debug info into backtrace's process-wide cache; nothing needs it
+                // until the next profile (a minute or more away), so give it back now, whether or not this one worked.
+                backtrace::clear_symbol_cache();
+                let bytes = bytes?;
                 let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
                 let patch = upload_body(profile, encoded);
                 let url = format!("{API}/{name}?updateMask=profileBytes");

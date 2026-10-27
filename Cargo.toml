@@ -53,7 +53,7 @@ pprof = { git = "https://github.com/microscaler/pprof-rs.git", rev = "ccc6819e45
 backtrace = { version = "0.3", optional = true }
 ureq = { version = "3", default-features = false, features = ["rustls", "json"], optional = true }
 serde_json = { version = "1", optional = true }
-base64 = { version = "0.22", optional = true }
+base64 = { version = "0.23", optional = true }
 flate2 = { version = "1", optional = true }
 # Heap profiles from jemalloc's own sampling (needs the service's allocator to be tikv-jemallocator 0.7 with
 # "profiling", and _RJEM_MALLOC_CONF=prof:true,... at run time); symbolized in-process.

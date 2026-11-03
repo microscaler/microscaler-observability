@@ -82,6 +82,12 @@ The services run on `may`, where a blocked OS thread stalls every coroutine sche
   every crate that wants one attribute, and its registry rejects a second registration of the
   same family from a second crate.
 
+## Gauges
+
+A few levels explain a latency better than any duration (open connections, an accept queue).
+They render beside the timings as `op_gauge{component, op}`: `Gauge` (kept by the code) and
+`GaugeFn` (read at scrape time), lock-free statics like `Site`.
+
 ## Cardinality and cost (Managed Prometheus)
 
 Managed Prometheus bills per sample: a histogram point is **2 samples + 1 per non-empty bucket**
@@ -110,6 +116,7 @@ that crate by revision.
 
 | component | ops | where |
 |---|---|---|
+| `may_minihttp.server` | `accept_to_first_byte`, `read_parse`, `service`, `response_write`, `request_total`; gauges `open_connections`, `accept_backlog`, `accept_backlog_limit` | the HTTP server under BRRTRouter (feature `op-timing`): the time before and after BRRTRouter's own timers |
 | `brrtrouter.queue` / `brrtrouter.handler` | operationId | BRRTRouter dispatcher, typed handlers, worker pools |
 | `brrtrouter.client` / `brrtrouter.proxy` | `pool_checkout`, `pool_wait`, `connect`, `connect_tls`, `request_write`, `response_headers`, `response_body`, `call` | BRRTRouter's `fetch_*` pool and BFF proxy, from the may_minihttp client's lifecycle events |
 | `brrtrouter.net` / `brrtrouter.proxy` | `resolve_cached`, `resolve` / `dns_cached`, `dns_resolve` | BRRTRouter's resolver and the proxy's address cache |

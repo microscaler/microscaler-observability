@@ -60,14 +60,16 @@
 //! be rendered: depend on it as `{ git = "...microscaler-observability.git", branch = "main" }`
 //! everywhere, and check with `cargo tree -d -i microscaler-timing`.
 
+mod gauge;
 mod intern;
 mod render;
 mod site;
 
+pub use gauge::{gauge_values, Gauge, GaugeFn};
 pub use intern::{intern, MAX_INTERNED};
 pub use microscaler_timing_macros::timed;
 pub use render::{
-    render_prometheus, render_prometheus_with, snapshot, OpSnapshot, RenderOptions,
+    render_prometheus, render_prometheus_with, snapshot, OpSnapshot, RenderOptions, GAUGE_METRIC,
     IN_FLIGHT_METRIC, METRIC,
 };
 pub use site::{Outcome, Site, Timer, BUCKET_BOUNDS_NANOS};

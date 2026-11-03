@@ -12,6 +12,8 @@ use crate::site::{linked_sites, Outcome, BUCKETS, BUCKET_BOUNDS_NANOS};
 
 /// The histogram family every timed operation is rendered under.
 pub const METRIC: &str = "op_duration_seconds";
+/// Levels kept beside the timings ([`crate::Gauge`], [`crate::GaugeFn`]).
+pub const GAUGE_METRIC: &str = "op_gauge";
 /// Gauge of calls in flight per operation (rendered only when asked for: see [`RenderOptions`]).
 pub const IN_FLIGHT_METRIC: &str = "op_in_flight";
 
@@ -121,6 +123,7 @@ fn escape(value: &str) -> String {
 /// Append `op_duration_seconds` (and, if asked, `op_in_flight`) in Prometheus text format.
 /// Appends nothing until some operation has recorded.
 pub fn render_prometheus_with(out: &mut String, options: RenderOptions) {
+    render_gauges(out);
     let series = snapshot();
     if series.is_empty() {
         return;
@@ -184,6 +187,29 @@ fn render_in_flight(out: &mut String) {
             out,
             "{IN_FLIGHT_METRIC}{{component=\"{}\",op=\"{}\"}} {n}",
             escape(&component),
+            escape(op)
+        )
+        .unwrap_or(());
+    }
+}
+
+fn render_gauges(out: &mut String) {
+    let mut rows = crate::gauge::gauge_values();
+    if rows.is_empty() {
+        return;
+    }
+    rows.sort_unstable_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+    writeln!(
+        out,
+        "# HELP {GAUGE_METRIC} Levels kept beside the operation timings (microscaler-timing)."
+    )
+    .unwrap_or(());
+    writeln!(out, "# TYPE {GAUGE_METRIC} gauge").unwrap_or(());
+    for (component, op, v) in rows {
+        writeln!(
+            out,
+            "{GAUGE_METRIC}{{component=\"{}\",op=\"{}\"}} {v}",
+            escape(&component_label(component)),
             escape(op)
         )
         .unwrap_or(());

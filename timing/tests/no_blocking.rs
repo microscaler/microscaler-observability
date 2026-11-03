@@ -41,22 +41,32 @@ const FORBIDDEN: &[&str] = &[
 
 #[test]
 fn record_path_source_has_no_blocking_primitives() {
+    for src in [
+        include_str!("../src/site.rs"),
+        include_str!("../src/gauge.rs"),
+    ] {
+        check_source(src);
+    }
     let src = include_str!("../src/site.rs");
+    let record_path = src.split("#[cfg(test)]").next().unwrap();
+    // and it is the record path: the guard and the recorder live there
+    assert!(record_path.contains("pub fn record("));
+    assert!(record_path.contains("pub fn start("));
+    assert!(record_path.contains("impl Drop for Timer"));
+}
+
+fn check_source(src: &str) {
     let record_path = src.split("#[cfg(test)]").next().unwrap();
     for (n, line) in record_path.lines().enumerate() {
         let code = line.split("//").next().unwrap();
         for word in FORBIDDEN {
             assert!(
                 !code.contains(word),
-                "src/site.rs:{}: `{word}` on the record path: {line}",
+                "line {}: `{word}` on the record path: {line}",
                 n + 1
             );
         }
     }
-    // and it is the record path: the guard and the recorder live there
-    assert!(record_path.contains("pub fn record("));
-    assert!(record_path.contains("pub fn start("));
-    assert!(record_path.contains("impl Drop for Timer"));
 }
 
 #[test]

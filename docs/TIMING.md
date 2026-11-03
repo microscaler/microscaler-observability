@@ -108,12 +108,30 @@ that crate by revision.
 
 ## Where it is wired
 
-- **BRRTRouter** renders the family on `/metrics` and times: request queue wait
-  (`brrtrouter.queue`/operationId), handler execution (`brrtrouter.handler`/operationId), the
-  outbound client phases from the HTTP client's lifecycle events (`brrtrouter.client` for
-  `fetch_*`, `brrtrouter.proxy` for the BFF proxy: `pool_wait`, `connect`, `connect_tls`,
-  `request_write`, `response_headers`, `response_body`, `call`) and its resolver
-  (`brrtrouter.net`: `resolve_cached`, `resolve`).
-- **Lifeguard**: pool checkout, query execution, row decode, Redis hot-cache hit/miss.
-- **lifeReflector**: NOTIFY received to Redis applied.
-- Services: `#[timed]` on their own I/O (ClickHouse, Fluvio, brokers, billing, session store).
+| component | ops | where |
+|---|---|---|
+| `brrtrouter.queue` / `brrtrouter.handler` | operationId | BRRTRouter dispatcher, typed handlers, worker pools |
+| `brrtrouter.client` / `brrtrouter.proxy` | `pool_checkout`, `pool_wait`, `connect`, `connect_tls`, `request_write`, `response_headers`, `response_body`, `call` | BRRTRouter's `fetch_*` pool and BFF proxy, from the may_minihttp client's lifecycle events |
+| `brrtrouter.net` / `brrtrouter.proxy` | `resolve_cached`, `resolve` / `dns_cached`, `dns_resolve` | BRRTRouter's resolver and the proxy's address cache |
+| `brrtrouter.auth` | `jwt_verify` | bearer JWT validation |
+| `lifeguard.pool` | `checkout`, `checkout_rls` | Lifeguard's worker pool |
+| `lifeguard.query` | `execute`, `query_opt`, `query_all`, `rls_unit`, `decode` | Lifeguard statements and `FromRow` |
+| `lifeguard.cache` | `get_hit`, `get_miss`, `set`, `invalidate` | the model cache |
+| `lifereflector` | `notify_to_applied`, `flush` | lifeReflector |
+| service components | `#[timed]` on their own I/O | e.g. ClickHouse, message bus, broker gateway, billing API, session store, token signing |
+
+`response_headers` is from the request being written to the response head being read (the
+downstream's time plus the network); `response_body` is reading the body. A slow proxied call
+splits into the two.
+
+## Decisions against the brief
+
+- Direct atomic recording, not a `tracing` metrics layer (see above).
+- No `prometheus` crate: zero dependencies, and one registry per process without double
+  registration.
+- The crate lives in this repository but is not re-exported from `microscaler-observability`
+  (one-copy rule).
+- `op_in_flight` is off by default (cost); `MICROSCALER_TIMING_IN_FLIGHT=1` turns it on.
+- Existing histograms (`brrtrouter_request_queue_seconds`, `sesame_bff_store_seconds`,
+  `lifeguard_*`, `lifereflector_*`) are kept for now. The queue and session-store ones duplicate
+  the shared family and can go once nothing reads them.

@@ -127,6 +127,65 @@ OTEL-standard variable covers the concern.
 - **Custom sampling policies beyond the standard OTEL-SDK samplers.** Tail
   sampling is a Collector concern.
 
+## Operation timing
+
+`timing/` holds **`microscaler-timing`**: annotate a function and its p50/p95/p99 appear on the
+operation-latency dashboard. Design and rationale: [`docs/TIMING.md`](docs/TIMING.md).
+
+```toml
+# Cargo.toml: every crate in a binary must use this same spec (one copy = one registry)
+microscaler-timing = { git = "https://github.com/microscaler/microscaler-observability.git", branch = "main" }
+```
+
+### How to annotate
+
+```rust
+use microscaler_timing::{timed, timed_block, Outcome, Site};
+
+#[timed]                                              // component = module path, op = "load_rules"
+fn load_rules() -> u32 { 0 }
+
+#[timed(component = "ledger.store", op = "append")]  // Result: Ok -> ok, Err -> err (or timeout)
+async fn append(entry: Entry) -> Result<(), StoreError> { ... }
+
+let rows = timed_block!("ledger.store", "decode", { decode(&raw) });  // a block
+
+static FLUSH: Site = Site::new("ledger.store", "flush");             // a manual span
+let t = FLUSH.start(); /* ... */ t.finish(Outcome::Ok);
+FLUSH.record(Outcome::Ok, measured_elsewhere);                       // a duration you already have
+```
+
+Nothing else: the host's `/metrics` renders every timed operation (BRRTRouter services get this
+for free; any other host appends `microscaler_timing::render_prometheus(&mut body)`), and the
+dashboard lists ops by p95 without being edited. An error type can implement
+`microscaler_timing::IsTimeout` so its timeouts get `outcome="timeout"`.
+
+### Naming rules
+
+- `component`: the crate or subsystem, dotted, lowercase: `brrtrouter.client`, `lifeguard.pool`,
+  `<service>.clickhouse`. Group related ops under one component so the dashboard filter is useful.
+- `op`: what the code does, `snake_case` verbs (`checkout`, `query`, `publish`), or the
+  OpenAPI operationId for handlers. Stable across releases: renaming an op starts a new series.
+- Only `[A-Za-z0-9_.:/-]`, at most 128 characters (the attribute rejects anything else).
+
+### Cardinality rules
+
+- **Labels name code, never data.** No ids, tickers, symbols, tenants, URLs, hosts, SQL, error
+  messages. If you want a per-value breakdown, that is a trace or a log, not a label.
+- Every distinct (component, op, outcome) is a histogram per pod, scraped every 30 s and billed
+  by Managed Prometheus at 2 samples + 1 per non-empty bucket, about **$0.035 per op per pod per
+  month**. Time the boundaries that matter (I/O, pools, locks, external calls), not every helper.
+- Runtime names (operationIds, configured pool names) go through `microscaler_timing::intern()`
+  **once at setup**, never per call; it caps at 2048 sites.
+- Series appear on first use; unused paths cost nothing.
+
+### Cost
+
+pp, Phase 1 + 2 coverage, about 1,500 histograms across ~50 pods (handler and queue time for the
+operations actually called, client phases on the BFFs, resolver, Lifeguard, the services' own
+I/O), averaging ~7 samples per scrape at 30 s: **~0.9 billion samples a month, about $55 a
+month** at $0.06 per million. Scraping pp at 60 s halves it. See `docs/TIMING.md`.
+
 ## Related docs
 
 - [`docs/PRD.md`](docs/PRD.md) — **Cross-repo master PRD.** Authoritative source

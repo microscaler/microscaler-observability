@@ -1,0 +1,28 @@
+[package]
+name = "microscaler-timing-macros"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+description = "The #[timed] attribute of microscaler-timing."
+license = "Apache-2.0"
+repository = "https://github.com/microscaler/microscaler-observability"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+module_name_repetitions = "allow"

@@ -13,6 +13,11 @@ categories = ["development-tools::debugging"]
 [lib]
 path = "src/lib.rs"
 
+# `timing/` is the zero-dependency operation-timing crate (`microscaler-timing`, docs/TIMING.md) and its proc-macro.
+# Separate crates so that Lifeguard, clients and tools can time their operations without this crate's OTLP stack.
+[workspace]
+members = [".", "timing", "timing/macros"]
+
 # ---------------------------------------------------------------------------
 # OpenTelemetry pins.
 #

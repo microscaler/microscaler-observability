@@ -71,7 +71,7 @@ jobs:
           key: cargo-clippy-${{ runner.os }}-${{ matrix.features }}-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
             cargo-clippy-${{ runner.os }}-${{ matrix.features }}-
-      - run: cargo clippy --all-targets ${{ matrix.flags }} -- -D warnings
+      - run: cargo clippy --workspace --all-targets ${{ matrix.flags }} -- -D warnings
 
   # ---------------------------------------------------------------------------
   # Tests. Run against both the default feature set and --all-features so
@@ -100,9 +100,9 @@ jobs:
           key: cargo-test-${{ runner.os }}-${{ matrix.features }}-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
             cargo-test-${{ runner.os }}-${{ matrix.features }}-
-      - run: cargo test ${{ matrix.flags }} --all-targets
+      - run: cargo test --workspace ${{ matrix.flags }} --all-targets
       - name: Doctests
-        run: cargo test ${{ matrix.flags }} --doc
+        run: cargo test --workspace ${{ matrix.flags }} --doc
 
   # ---------------------------------------------------------------------------
   # Rustdoc with broken intra-doc link denial. The public API surface must
@@ -126,7 +126,7 @@ jobs:
       - name: Build rustdoc
         env:
           RUSTDOCFLAGS: '-D warnings -D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links'
-        run: cargo doc --no-deps --all-features
+        run: cargo doc --workspace --no-deps --all-features
 
   # ---------------------------------------------------------------------------
   # MSRV (Minimum Supported Rust Version) gate — the crate declares 1.89 (uuid 1.29; tonic 0.14, time and icu need 1.88).
@@ -147,7 +147,7 @@ jobs:
           key: cargo-msrv-${{ runner.os }}-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
             cargo-msrv-${{ runner.os }}-
-      - run: cargo build --all-features
+      - run: cargo build --workspace --all-features
 
   # ---------------------------------------------------------------------------
   # Aggregate gate used by branch-protection — every job above must succeed.

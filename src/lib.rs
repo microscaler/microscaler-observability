@@ -121,6 +121,20 @@ pub struct ProfilerGuard {
     _handle: Option<profiler::ProfilerHandle>,
 }
 
+/// Cloud Profiler archive writes since start, `(written, failed)` (`PROFILER_ARCHIVE_BUCKET`; see the profiler
+/// module). `(0, 0)` when the agent is not compiled in or never archived.
+#[must_use]
+pub fn profiler_archive_counts() -> (u64, u64) {
+    #[cfg(all(feature = "cloud-profiler", target_os = "linux"))]
+    {
+        profiler::archive_counts()
+    }
+    #[cfg(not(all(feature = "cloud-profiler", target_os = "linux")))]
+    {
+        (0, 0)
+    }
+}
+
 /// Start the Google Cloud Profiler agent without the rest of [`init`], for hosts that do not send OTLP
 /// (no `OTEL_EXPORTER_OTLP_ENDPOINT`) but should still be profiled. [`init`] starts it by itself.
 ///

@@ -27,12 +27,20 @@
 //!
 //! Failures never reach the host: every error is logged at `warn` (target `microscaler_observability::profiler`)
 //! and retried with backoff, or after the delay the server asks for (`409 ABORTED` with a `RetryInfo`).
+//!
+//! **Archive (optional).** Cloud Profiler keeps profiles for 30 days and has no API to fetch one back. With
+//! `PROFILER_ARCHIVE_BUCKET` set, the agent also writes every profile it collected - after the upload, whether the
+//! upload worked or not - to that Cloud Storage bucket, with the same token, as
+//! `profiles/<target>/<TYPE>/<YYYY-MM-DD>/<start, RFC 3339 UTC>_<version>_<pod>.pb.gz` (the gzipped pprof, as uploaded;
+//! pod is `HOSTNAME`), with target, type, version, pod and duration as object metadata. Best effort: one try with a
+//! 10 s timeout, never overwriting an object; a failure is logged at `warn` and counted ([`archive_counts`]), and
+//! never delays or fails the profile.
 
 use std::io::Write as _;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use pprof::protos::Message as _;
@@ -49,6 +57,21 @@ const FREQUENCY_HZ: i32 = 99;
 const CREATE_TIMEOUT: Duration = Duration::from_secs(3_700);
 const MIN_BACKOFF: Duration = Duration::from_secs(60);
 const MAX_BACKOFF: Duration = Duration::from_secs(3_600);
+/// Optional: a Cloud Storage bucket the agent also writes every profile to (see the module docs).
+const ENV_ARCHIVE_BUCKET: &str = "PROFILER_ARCHIVE_BUCKET";
+const STORAGE_UPLOAD: &str = "https://storage.googleapis.com/upload/storage/v1/b";
+const ARCHIVE_TIMEOUT: Duration = Duration::from_secs(10);
+
+static ARCHIVED: AtomicU64 = AtomicU64::new(0);
+static ARCHIVE_FAILED: AtomicU64 = AtomicU64::new(0);
+
+/// Profiles written to the archive bucket, and archive writes that failed, since the process started.
+pub fn archive_counts() -> (u64, u64) {
+    (
+        ARCHIVED.load(Ordering::Relaxed),
+        ARCHIVE_FAILED.load(Ordering::Relaxed),
+    )
+}
 
 type Res<T> = Result<T, String>;
 
@@ -81,6 +104,14 @@ pub fn start(service: &str, version: Option<&str>) -> Option<ProfilerHandle> {
         stop: Arc::clone(&stop),
         token: None,
         project: None,
+        archive: std::env::var(ENV_ARCHIVE_BUCKET)
+            .ok()
+            .map(|b| b.trim().to_string())
+            .filter(|b| !b.is_empty()),
+        pod: std::env::var("HOSTNAME")
+            .ok()
+            .filter(|h| !h.trim().is_empty())
+            .unwrap_or_else(|| "unknown".into()),
     };
     match thread::Builder::new()
         .name("obs-profiler".into())
@@ -103,6 +134,10 @@ struct Agent {
     stop: Arc<AtomicBool>,
     token: Option<(String, Instant)>,
     project: Option<String>,
+    /// `PROFILER_ARCHIVE_BUCKET`, when set.
+    archive: Option<String>,
+    /// `HOSTNAME`: the pod, in archive object names.
+    pod: String,
 }
 
 /// What `CreateProfile` / an error answered with.
@@ -159,6 +194,7 @@ impl Agent {
                 duration,
                 profile,
             } => {
+                let started = SystemTime::now();
                 let bytes = match kind.as_str() {
                     "HEAP" => collect_heap(),
                     _ => collect_cpu(duration, &self.stop),
@@ -167,10 +203,13 @@ impl Agent {
                 // until the next profile (a minute or more away), so give it back now, whether or not this one worked.
                 backtrace::clear_symbol_cache();
                 let bytes = bytes?;
-                let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+                let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
                 let patch = upload_body(profile, encoded);
                 let url = format!("{API}/{name}?updateMask=profileBytes");
-                self.call("PATCH", &url, &patch, Duration::from_secs(60))?;
+                let uploaded = self.call("PATCH", &url, &patch, Duration::from_secs(60));
+                // keep our copy whether or not Cloud Profiler took it
+                self.archive(&kind, duration, started, &bytes);
+                uploaded?;
                 Ok(None)
             }
         }
@@ -244,6 +283,57 @@ impl Agent {
                     .map(ToString::to_string)
                     .unwrap_or_default()
             )),
+        }
+    }
+
+    /// Write `bytes` to the archive bucket, when one is set. Best effort: counted and logged, never an error.
+    fn archive(&mut self, kind: &str, duration: Duration, started: SystemTime, bytes: &[u8]) {
+        let Some(bucket) = self.archive.clone() else {
+            return;
+        };
+        let micros = started
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| u64::try_from(d.as_micros()).unwrap_or(u64::MAX));
+        let object = archive_object(&self.target, kind, &self.version, &self.pod, micros);
+        let result = self.token().and_then(|token| {
+            let meta = serde_json::json!({
+                "name": object,
+                "contentType": "application/octet-stream",
+                "metadata": {
+                    "target": self.target, "type": kind, "version": self.version, "pod": self.pod,
+                    "duration": format!("{}s", duration.as_secs_f64()),
+                },
+            });
+            let (content_type, body) = multipart_related(&meta, bytes);
+            // ifGenerationMatch=0: create only, never replace an object already there
+            let url = format!(
+                "{STORAGE_UPLOAD}/{}/o?uploadType=multipart&ifGenerationMatch=0",
+                percent_encode(&bucket)
+            );
+            let agent: ureq::Agent = ureq::Agent::config_builder()
+                .http_status_as_error(false)
+                .timeout_global(Some(ARCHIVE_TIMEOUT))
+                .build()
+                .into();
+            let resp = agent
+                .post(&url)
+                .header("Authorization", &format!("Bearer {token}"))
+                .header("Content-Type", &content_type)
+                .send(&body[..])
+                .map_err(|e| format!("archive {object}: {e}"))?;
+            match resp.status().as_u16() {
+                200..=299 => Ok(()),
+                status => Err(format!("archive {object}: {status}")),
+            }
+        });
+        match result {
+            Ok(()) => {
+                ARCHIVED.fetch_add(1, Ordering::Relaxed);
+            }
+            Err(e) => {
+                ARCHIVE_FAILED.fetch_add(1, Ordering::Relaxed);
+                tracing::warn!(target: "microscaler_observability::profiler", error = %e, "profile archive");
+            }
         }
     }
 
@@ -365,6 +455,96 @@ fn upload_body(mut profile: serde_json::Value, encoded: String) -> serde_json::V
     profile
 }
 
+/// `profiles/<target>/<TYPE>/<YYYY-MM-DD>/<start>_<version>_<pod>.pb.gz`, `start` as RFC 3339 UTC with
+/// microseconds (`2026-11-05T09:15:16.962689Z`); a `/` or whitespace in a part becomes `-`.
+fn archive_object(target: &str, kind: &str, version: &str, pod: &str, start_micros: u64) -> String {
+    let clean = |s: &str| -> String {
+        let s: String = s
+            .chars()
+            .map(|c| {
+                if c == '/' || c.is_whitespace() {
+                    '-'
+                } else {
+                    c
+                }
+            })
+            .collect();
+        if s.is_empty() {
+            "unknown".into()
+        } else {
+            s
+        }
+    };
+    let secs = start_micros / 1_000_000;
+    let (y, m, d) = civil_from_days(i64::try_from(secs / 86_400).unwrap_or(0));
+    let tod = secs % 86_400;
+    format!(
+        "profiles/{}/{}/{y:04}-{m:02}-{d:02}/{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{:06}Z_{}_{}.pb.gz",
+        clean(target),
+        clean(&kind.to_ascii_uppercase()),
+        tod / 3_600,
+        tod % 3_600 / 60,
+        tod % 60,
+        start_micros % 1_000_000,
+        clean(version),
+        clean(pod),
+    )
+}
+
+/// The proleptic Gregorian (year, month, day) of a day count since 1970-01-01 (Howard Hinnant's algorithm).
+/// The day counts here come from a u64 of seconds / 86 400, far inside the range where none of this overflows, and
+/// the day and month it returns are 1..=31 and 1..=12.
+#[allow(
+    clippy::arithmetic_side_effects,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    (y, m, d)
+}
+
+/// Every byte outside RFC 3986's unreserved set as `%XX`.
+fn percent_encode(s: &str) -> String {
+    let mut o = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            o.push(b as char);
+        } else {
+            o.push('%');
+            for nibble in [b >> 4, b & 0xF] {
+                let c = char::from_digit(u32::from(nibble), 16).unwrap_or('0');
+                o.push(c.to_ascii_uppercase());
+            }
+        }
+    }
+    o
+}
+
+/// A Cloud Storage multipart upload: the object's JSON metadata, then its bytes. Returns (Content-Type, body).
+fn multipart_related(meta: &serde_json::Value, bytes: &[u8]) -> (String, Vec<u8>) {
+    let boundary = "microscaler-profile-archive-7f3a9c";
+    let mut body = Vec::with_capacity(bytes.len().saturating_add(512));
+    body.extend_from_slice(
+        format!("--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{meta}\r\n")
+            .as_bytes(),
+    );
+    body.extend_from_slice(
+        format!("--{boundary}\r\nContent-Type: application/octet-stream\r\n\r\n").as_bytes(),
+    );
+    body.extend_from_slice(bytes);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    (format!("multipart/related; boundary={boundary}"), body)
+}
+
 fn metadata(path: &str) -> Res<String> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(10)))
@@ -453,6 +633,38 @@ fn retry_delay(json: &serde_json::Value) -> Option<Duration> {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+
+    #[test]
+    fn archive_objects_are_named_by_target_type_day_and_start() {
+        // 2026-11-05T09:15:16.962689Z
+        let t = 1_793_870_116_962_689;
+        assert_eq!(
+            archive_object("market", "cpu", "v0.1.184", "market-77c9b7c5c4-x2zr2", t),
+            "profiles/market/CPU/2026-11-05/2026-11-05T09:15:16.962689Z_v0.1.184_market-77c9b7c5c4-x2zr2.pb.gz"
+        );
+        assert_eq!(
+            archive_object("a/b", "HEAP", "", "p o d", 0),
+            "profiles/a-b/HEAP/1970-01-01/1970-01-01T00:00:00.000000Z_unknown_p-o-d.pb.gz"
+        );
+        assert_eq!(civil_from_days(-1), (1969, 12, 31));
+        assert_eq!(civil_from_days(19_782), (2024, 2, 29));
+    }
+
+    #[test]
+    fn archive_uploads_are_multipart_with_encoded_names() {
+        assert_eq!(
+            percent_encode("pw-runtime-pp-profiles"),
+            "pw-runtime-pp-profiles"
+        );
+        assert_eq!(percent_encode("a/b c:1"), "a%2Fb%20c%3A1");
+        let (ct, body) = multipart_related(&serde_json::json!({"name": "x"}), b"\x1f\x8bgz");
+        let boundary = ct.strip_prefix("multipart/related; boundary=").unwrap();
+        let text = String::from_utf8_lossy(&body);
+        assert!(text.starts_with(&format!("--{boundary}\r\nContent-Type: application/json")));
+        assert!(text.contains("{\"name\":\"x\"}"));
+        assert!(body.windows(4).any(|w| w == b"\x1f\x8bgz"));
+        assert!(text.ends_with(&format!("\r\n--{boundary}--\r\n")));
+    }
 
     #[test]
     fn uploads_the_whole_profile_back() {

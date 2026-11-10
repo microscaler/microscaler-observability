@@ -167,6 +167,9 @@ fn expand(args: &Args, func: ItemFn) -> syn::Result<TokenStream2> {
         vis,
         sig,
         block,
+        // syn 3 fn modifiers (future syntax: gen, final, contracts) parse to nothing on stable Rust and syn
+        // itself prints an ItemFn without them, so the timed wrapper does the same.
+        ..
     } = func;
     if sig.constness.is_some() {
         return Err(syn::Error::new_spanned(

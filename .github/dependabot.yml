@@ -63,3 +63,7 @@ updates:
     commit-message:
       prefix: "chore(ci)"
       include: scope
+    ignore:
+      # dtolnay/rust-toolchain@<version> pins the toolchain a job runs (the MSRV job uses @1.89, the crate
+      # rust-version); it is not an action release, so a bump would silently move the MSRV check.
+      - dependency-name: "dtolnay/rust-toolchain"

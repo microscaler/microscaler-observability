@@ -124,6 +124,8 @@ pub struct ProfilerGuard {
 /// Cloud Profiler archive writes since start, `(written, failed)` (`PROFILER_ARCHIVE_BUCKET`; see the profiler
 /// module). `(0, 0)` when the agent is not compiled in or never archived.
 #[must_use]
+// Not const: with the cloud profiler compiled in it reads the archive counters at run time.
+#[allow(clippy::missing_const_for_fn)]
 pub fn profiler_archive_counts() -> (u64, u64) {
     #[cfg(all(feature = "cloud-profiler", target_os = "linux"))]
     {

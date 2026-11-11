@@ -1,0 +1,8 @@
+# cargo-audit configuration (read by the Security audit workflow).
+[advisories]
+ignore = [
+    # RUSTSEC-2024-0436: paste is unmaintained (no vulnerability). It is a proc-macro, used at compile time only,
+    # through jemalloc_pprof / pprof_util in the cloud-profiler feature.
+    # Remove this ignore when pprof_util drops paste.
+    "RUSTSEC-2024-0436",
+]

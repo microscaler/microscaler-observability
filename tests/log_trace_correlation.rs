@@ -1,13 +1,8 @@
-//! A log emitted inside a tracing span carries that span's trace and span ids.
-//!
-//! Until opentelemetry-appender-tracing 0.31 this needed its `experimental_use_tracing_span_context`
-//! feature. From 0.32 the bridge reads the current OpenTelemetry context, which tracing-opentelemetry
-//! activates when a span is entered (`with_context_activation`, on by default). This pins that the
-//! layers `init()` composes still correlate logs with traces.
+//! A log emitted inside an entered span, on a plain thread, carries that span's trace and span ids, with the
+//! layers `init()` installs (`otel_layers`). Spans on may coroutines, never entered, are covered by
+//! `tests/log_trace_in_coroutines.rs`.
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::indexing_slicing)]
 
-use opentelemetry::trace::TracerProvider as _;
-use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_sdk::logs::{InMemoryLogExporter, SdkLoggerProvider};
 use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider};
 use tracing_subscriber::layer::SubscriberExt;
@@ -23,12 +18,10 @@ fn a_log_inside_a_span_carries_the_span_trace_and_span_ids() {
         .with_simple_exporter(logs.clone())
         .build();
 
-    let subscriber = tracing_subscriber::registry()
-        .with(
-            tracing_opentelemetry::layer().with_tracer(tracer_provider.tracer("correlation-test")),
-        )
-        .with(OpenTelemetryTracingBridge::new(&logger_provider));
-
+    let subscriber = tracing_subscriber::registry().with(microscaler_observability::otel_layers(
+        &tracer_provider,
+        &logger_provider,
+    ));
     tracing::subscriber::with_default(subscriber, || {
         let span = tracing::info_span!("request");
         let _entered = span.enter();

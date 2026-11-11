@@ -90,6 +90,9 @@ http-json = ["opentelemetry-otlp/http-json"]
 dev-stdout-fallback = []
 
 [dev-dependencies]
+# tests/log_trace_in_coroutines.rs: logs on may coroutines inside may_tracing spans (as hosts run them).
+may = "0.3"
+may_tracing = { git = "https://github.com/microscaler/may_tracing.git", tag = "v0.1.2" }
 opentelemetry_sdk = { version = "0.33", features = ["testing", "trace", "logs"] }
 # Integration tests spin up an in-process OTLP gRPC receiver to verify end-to-end.
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
@@ -112,9 +115,10 @@ prost = "0.14"
 # ---------------------------------------------------------------------------
 
 [lints.rust]
-# Pure Rust library — no unsafe needed. Forbid is stronger than deny:
-# `#[allow(unsafe_code)]` cannot override forbid, so this is a true invariant.
-unsafe_code = "forbid"
+# Pure Rust library — no unsafe needed. Denied for every target here; the library itself forbids it
+# (`#![forbid(unsafe_code)]` in src/lib.rs, which nothing can override), so only an integration test can opt
+# in (tests/log_trace_in_coroutines.rs spawns a may coroutine, which is unsafe).
+unsafe_code = "deny"
 
 # Every new public item carries rustdoc. Already asserted via `#![deny]` in
 # lib.rs; duplicated here so `cargo clippy` exits non-zero for missing docs

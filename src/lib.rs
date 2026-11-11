@@ -102,6 +102,9 @@
 // "Golden rules"). Only top-level module attributes that the [lints] table
 // cannot express go here.
 #![deny(missing_docs)]
+// Forbid (not just deny) for the library itself; Cargo.toml denies unsafe for every target, so an integration
+// test may opt in explicitly (spawning a `may` coroutine is unsafe) without the library ever being able to.
+#![forbid(unsafe_code)]
 
 mod bootstrap;
 mod config;
@@ -110,6 +113,7 @@ mod error;
 mod profiler;
 mod shutdown;
 
+pub use bootstrap::otel_layers;
 pub use config::{ObservabilityConfig, OtlpProtocol, Sampler};
 pub use error::{ObservabilityError, ObservabilityResult};
 pub use shutdown::ShutdownGuard;

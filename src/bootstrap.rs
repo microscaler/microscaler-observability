@@ -136,18 +136,13 @@ fn install_subscriber_otlp(
 
     global::set_text_map_propagator(TraceContextPropagator::new());
 
-    let otel_trace_layer = trace_layer(&tracer_provider);
-
-    let otel_log_layer = OpenTelemetryTracingBridge::new(&logger_provider);
-
     if with_stdout {
         let fmt = tracing_subscriber::fmt::layer()
             .with_target(true)
             .with_writer(std::io::stdout);
         if Registry::default()
             .with(env_filter)
-            .with(otel_trace_layer)
-            .with(otel_log_layer)
+            .with(otel_layers(&tracer_provider, &logger_provider))
             .with(fmt)
             .try_init()
             .is_err()
@@ -157,8 +152,7 @@ fn install_subscriber_otlp(
         }
     } else if Registry::default()
         .with(env_filter)
-        .with(otel_trace_layer)
-        .with(otel_log_layer)
+        .with(otel_layers(&tracer_provider, &logger_provider))
         .try_init()
         .is_err()
     {
@@ -171,6 +165,119 @@ fn install_subscriber_otlp(
         tracer_provider,
         logger_provider,
     ))
+}
+
+/// The OpenTelemetry layers [`crate::init`] installs over these providers: spans ([`trace_layer`]) and logs.
+///
+/// Public so tests can check the composition a host actually gets; hosts call [`crate::init`].
+#[doc(hidden)]
+#[must_use]
+pub fn otel_layers<S>(
+    tracer_provider: &SdkTracerProvider,
+    logger_provider: &SdkLoggerProvider,
+) -> impl tracing_subscriber::Layer<S>
+where
+    S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+{
+    use tracing_subscriber::Layer as _;
+    trace_layer(tracer_provider).and_then(log_layer(logger_provider))
+}
+
+/// Logs → OpenTelemetry, each record with the trace context of the span its event belongs to.
+fn log_layer(
+    logger_provider: &SdkLoggerProvider,
+) -> SpanContextLogs<
+    OpenTelemetryTracingBridge<SdkLoggerProvider, opentelemetry_sdk::logs::SdkLogger>,
+> {
+    SpanContextLogs {
+        inner: OpenTelemetryTracingBridge::new(logger_provider),
+        dispatch: std::sync::OnceLock::new(),
+    }
+}
+
+/// Gives the log bridge the OpenTelemetry context of the span an event belongs to.
+///
+/// `opentelemetry-appender-tracing` (0.32 on) takes a record's trace and span ids from the *current* OpenTelemetry
+/// context. `tracing-opentelemetry` sets that only while a span is entered with context activation on, which
+/// [`trace_layer`] turns off, and our hosts do not enter spans on `may` anyway: `may_tracing` parents events on the
+/// coroutine's span explicitly. So, per event, this looks up the event's span (its explicit parent, else the
+/// thread's current span) and attaches that span's context around the bridge's `on_event` only. The guard is pushed
+/// and popped inside one synchronous call, so, unlike an entered span's context, it cannot be left on a thread when
+/// a coroutine yields.
+pub struct SpanContextLogs<L> {
+    inner: L,
+    /// The subscriber this layer is part of, for `get_otel_context` (set when it becomes a `Dispatch`).
+    dispatch: std::sync::OnceLock<tracing::dispatcher::WeakDispatch>,
+}
+
+impl<S, L> tracing_subscriber::Layer<S> for SpanContextLogs<L>
+where
+    S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+    L: tracing_subscriber::Layer<S>,
+{
+    fn on_register_dispatch(&self, subscriber: &tracing::Dispatch) {
+        self.dispatch.get_or_init(|| subscriber.downgrade());
+        self.inner.on_register_dispatch(subscriber);
+    }
+
+    fn on_layer(&mut self, subscriber: &mut S) {
+        self.inner.on_layer(subscriber);
+    }
+
+    fn register_callsite(
+        &self,
+        metadata: &'static tracing::Metadata<'static>,
+    ) -> tracing::subscriber::Interest {
+        self.inner.register_callsite(metadata)
+    }
+
+    fn enabled(
+        &self,
+        metadata: &tracing::Metadata<'_>,
+        ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) -> bool {
+        self.inner.enabled(metadata, ctx)
+    }
+
+    fn event_enabled(
+        &self,
+        event: &tracing::Event<'_>,
+        ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) -> bool {
+        self.inner.event_enabled(event, ctx)
+    }
+
+    fn on_new_span(
+        &self,
+        attrs: &tracing::span::Attributes<'_>,
+        id: &tracing::span::Id,
+        ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        self.inner.on_new_span(attrs, id, ctx);
+    }
+
+    fn on_record(
+        &self,
+        id: &tracing::span::Id,
+        values: &tracing::span::Record<'_>,
+        ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        self.inner.on_record(id, values, ctx);
+    }
+
+    fn on_event(&self, event: &tracing::Event<'_>, ctx: tracing_subscriber::layer::Context<'_, S>) {
+        use opentelemetry::trace::TraceContextExt as _;
+        let span_cx = ctx
+            .event_span(event)
+            .map(|span| span.id())
+            .and_then(|id| {
+                let dispatch = self.dispatch.get()?.upgrade()?;
+                tracing_opentelemetry::get_otel_context(&id, &dispatch)
+            })
+            .filter(|cx| cx.span().span_context().is_valid());
+        let _attached = span_cx.map(opentelemetry::Context::attach);
+        self.inner.on_event(event, ctx);
+    }
 }
 
 /// The `tracing` → OpenTelemetry span layer, without OpenTelemetry context activation.

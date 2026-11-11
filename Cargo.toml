@@ -31,14 +31,14 @@ members = [".", "timing", "timing/macros"]
 # See docs/PRD.md §Phase O.0.
 # ---------------------------------------------------------------------------
 [dependencies]
-opentelemetry = { version = "0.31", features = ["trace"] }
-opentelemetry_sdk = { version = "0.31", features = ["rt-tokio-current-thread", "trace", "logs"] }
-opentelemetry-otlp = { version = "=0.31.0", default-features = false, features = ["grpc-tonic", "trace", "logs"] }
-opentelemetry-semantic-conventions = "0.31"
-opentelemetry-appender-tracing = { version = "0.31", features = ["experimental_use_tracing_span_context"] }
+opentelemetry = { version = "0.33", features = ["trace"] }
+opentelemetry_sdk = { version = "0.33", features = ["rt-tokio-current-thread", "trace", "logs"] }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["grpc-tonic", "trace", "logs"] }
+opentelemetry-semantic-conventions = "0.33"
+opentelemetry-appender-tracing = { version = "0.33" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "registry", "env-filter", "fmt"] }
-tracing-opentelemetry = "0.32"
+tracing-opentelemetry = "0.34"
 thiserror = "2"
 # OTLP/Tonic builds gRPC channels with `tokio::spawn`; hosts (e.g. BRRTRouter + may) have no
 # Tokio runtime in `main`. We own one runtime for the process lifetime when OTLP is enabled.
@@ -90,19 +90,12 @@ http-json = ["opentelemetry-otlp/http-json"]
 dev-stdout-fallback = []
 
 [dev-dependencies]
+opentelemetry_sdk = { version = "0.33", features = ["testing", "trace", "logs"] }
 # Integration tests spin up an in-process OTLP gRPC receiver to verify end-to-end.
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
 tonic = "0.14"
 prost = "0.14"
 
-# Align with BRRTRouter / opentelemetry-otlp 0.31 (reqwest 0.13).
-[patch.crates-io]
-opentelemetry = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "965078315b58ae14725721735f1c8e2bc2d3b445" }
-opentelemetry_sdk = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "965078315b58ae14725721735f1c8e2bc2d3b445" }
-opentelemetry-http = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "965078315b58ae14725721735f1c8e2bc2d3b445" }
-opentelemetry-otlp = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "965078315b58ae14725721735f1c8e2bc2d3b445" }
-opentelemetry-proto = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "965078315b58ae14725721735f1c8e2bc2d3b445" }
-opentelemetry-semantic-conventions = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "965078315b58ae14725721735f1c8e2bc2d3b445" }
 
 # ---------------------------------------------------------------------------
 # Lints — enforced at CI via `cargo clippy --all-targets --all-features -D warnings`.
